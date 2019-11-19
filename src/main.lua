@@ -1,4 +1,5 @@
 local inspect = require('inspect')
+local CrossGizmo = require('gizmos/crossgizmo')
 local MBExpression = require('data/mbexpression')
 local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
@@ -12,6 +13,8 @@ local REGION_VEC_SNAP_TIP = 'REGION_VEC_SNAP_TIP'
 local REGION_VEC_SNAP_TAIL = 'REGION_VEC_SNAP_TAIL'
 
 local REGION_2VEC_ADD_CROSS = 'REGION_2VEC_ADD_CROSS'
+
+local VALUE_HANDLE_DISTANCE = 0.10
 
 all_trackable_devices = {
     ['hand/left'] = {
@@ -32,7 +35,10 @@ regions = {}
 lastTrigger = false
 activeAction = nil
 selectedVecs = {}
+gizmos = {}
 function lovr.update()
+    gizmos = {}
+
     local handPos = vec3(lovr.headset.getPosition('hand/right'))
     local trigger = lovr.headset.isDown('hand/right', 'trigger')
 
@@ -64,7 +70,11 @@ function lovr.update()
                 activeAction = function(handPos)
                     local pos = vectors:get(vecId).posExpr:evaluate().value
                     -- TODO: Handle error, I guess
-                    vectors:get(vecId).valueExpr:set(handPos - pos)
+
+                    local toHand = vec3(handPos) - vec3(pos) -- paranoia!
+                    local handDistance = toHand:length()
+                    local finalLength = handDistance + VALUE_HANDLE_DISTANCE
+                    vectors:get(vecId).valueExpr:set(toHand * (finalLength / handDistance))
                 end
             elseif t == REGION_VEC_POS then
                 local vecId = selectedRegion.info.data.vecId
@@ -91,6 +101,8 @@ function lovr.update()
                 ))
 
                 activeAction = function() end
+
+                selectedVecs = {}
             end
         end
 
@@ -145,7 +157,7 @@ function lovr.update()
         vec:update()
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos + vec.computedValue / 2,
-            0.03,
+            0.07,
             MBRegionInfo:new(REGION_VEC_SELECT, {
                 vecId = id,
             })
@@ -153,7 +165,7 @@ function lovr.update()
         if instanceof(vec.valueExpr, MBExpression.FreeVector) then
             table.insert(regions, MBSphereRegion:new(
                 valueHandlePos(vec.computedValue, vec.computedPos),
-                0.03,
+                0.07,
                 MBRegionInfo:new(REGION_VEC_VALUE, {
                     vecId = id,
                 })
@@ -162,7 +174,7 @@ function lovr.update()
         if instanceof(vec.posExpr, MBExpression.FreeVector) then
             table.insert(regions, MBSphereRegion:new(
                 posHandlePos(vec.computedValue, vec.computedPos),
-                0.03,
+                0.07,
                 MBRegionInfo:new(REGION_VEC_POS, {
                     vecId = id,
                 })
@@ -170,14 +182,14 @@ function lovr.update()
         end
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos,
-            0.04,
+            0.07,
             MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
                 vecId = id,
             })
         ))
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos + vec.computedValue,
-            0.04,
+            0.07,
             MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
                 vecId = id,
             })
@@ -186,12 +198,14 @@ function lovr.update()
 
     if #selectedVecs == 2 then
         -- Check for cross product
-        v1 = vectors:get(selectedVecs[1])
-        v2 = vectors:get(selectedVecs[2])
+        local v1 = vectors:get(selectedVecs[1])
+        local v2 = vectors:get(selectedVecs[2])
         if (v2.computedPos - v1.computedPos):length() < 0.02 then
+            local pos = v1.computedPos + vec3(v1.computedValue):cross(v2.computedValue):normalize() * 0.15
+            table.insert(gizmos, CrossGizmo:new(pos, quat(vec3(v1.computedValue):normalize())))
             table.insert(regions, MBSphereRegion:new(
-                v1.computedPos + vec3(v1.computedValue):cross(v2.computedValue):normalize() * 0.15,
-                0.03,
+                pos,
+                0.07,
                 MBRegionInfo:new(REGION_2VEC_ADD_CROSS, {
                     vec1Id = selectedVecs[1],
                     vec2Id = selectedVecs[2],
@@ -212,19 +226,30 @@ function lovr.draw()
     end
 
     for id, vec in pairs(vectors.objs) do
+        local TIP_LENGTH = 0.07
+
         local value = vec.computedValue
         local pos = vec.computedPos
-        local length = math.max(0.01, value:length())
+        local length = math.max(0.01, value:length() - 0.05)
 
         local rot = quat(vec3(value):normalize())
 
         local mat = contains(selectedVecs, id) and selectedVecMaterial or vecMaterial
 
-        lovr.graphics.cylinder(mat, pos + value / 2, length, rot, 0.01, 0.01)
+        lovr.graphics.cylinder(mat, pos + vec3(value):normalize() * length / 2, length, rot, 0.01, 0.01)
+        lovr.graphics.cylinder(
+            mat,
+            pos + value - vec3(value):normalize() * TIP_LENGTH / 2,
+            TIP_LENGTH, rot, 0, 0.03
+        )
     end
 
-    for _, region in pairs(regions) do
-        lovr.graphics.sphere(regionMaterial, region.center, region.radius)
+    -- for _, region in pairs(regions) do
+    --     lovr.graphics.sphere(regionMaterial, region.center, region.radius)
+    -- end
+
+    for _, gizmo in ipairs(gizmos) do
+        gizmo:draw()
     end
 end
 
@@ -237,7 +262,7 @@ function pose2mat4(x, y, z, angle, ax, ay, az)
 end
 
 function valueHandlePos(vecValue, vecPos)
-    return vecPos + vecValue - (vec3(vecValue):normalize() * 0.10)
+    return vecPos + vecValue - (vec3(vecValue):normalize() * VALUE_HANDLE_DISTANCE)
 end
 
 function posHandlePos(vecValue, vecPos)
