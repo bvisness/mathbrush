@@ -1,3 +1,5 @@
+local inspect = require('inspect')
+
 local MBExpression = require('data/mbexpression')
 local MBExpressionResult = require('data/mbexpressionresult')
 
@@ -36,19 +38,6 @@ function MBVec:update()
     self.computedPos = posResult.value
 
     return valueResult.value, posResult.value
-end
-
-function vecReferenceExpression(vecList, vecId, f)
-    return {
-        evaluate = function()
-            local vec = vecList:get(vecId)
-            if vec == nil then
-                return MBExpressionResult:new("referenced missing vector " .. vecId, MBExpressionResult.TYPE_ERROR)
-            else
-                return f(vec)
-            end
-        end,
-    }
 end
 
 return MBVec

@@ -5,8 +5,10 @@ local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
 local MBVec = require('data/mbvec')
 
-local REGION_VEC_VALUE = 'mbvec.value'
-local REGION_VEC_POS = 'mbvec.pos'
+local REGION_VEC_VALUE = 'REGION_VEC_VALUE'
+local REGION_VEC_POS = 'REGION_VEC_POS'
+local REGION_VEC_SNAP_TIP = 'REGION_VEC_SNAP_TIP'
+local REGION_VEC_SNAP_TAIL = 'REGION_VEC_SNAP_TAIL'
 
 local HANDLE_DISTANCE = 0.05
 
@@ -33,6 +35,8 @@ function lovr.update()
     local trigger = lovr.headset.isDown('hand/right', 'trigger')
 
     if trigger and not lastTrigger then
+        assert(activeAction == nil)
+
         -- See if you are clicking on a region
         local selectedRegion, minDist = nil, -1
         for _, region in ipairs(regions) do
@@ -50,7 +54,8 @@ function lovr.update()
             if t == REGION_VEC_VALUE then
                 local vecId = selectedRegion.info.data.vecId
                 activeAction = function(handPos)
-                    local pos = vectors:get(vecId).computedPos
+                    local pos = vectors:get(vecId).posExpr:evaluate().value
+                    -- TODO: Handle error, I guess
                     vectors:get(vecId).valueExpr:set(handPos - pos)
                 end
             elseif t == REGION_VEC_POS then
@@ -62,14 +67,33 @@ function lovr.update()
                     vectors:get(vecId).posExpr:set(vecStartPos + (handPos - handStartPos))
                 end
             end
-        else
-            local vecStartPos = lovr.math.newVec3(handPos)
+        end
+
+        if not activeAction then
+            -- None of the regions we clicked above triggered their own action.
+            -- Make a new vector.
+
+            local handStartPos = lovr.math.newVec3(handPos)
+
+            local posExpr = MBExpression.FreeVector:new(handStartPos)
+            if selectedRegion then
+                local t = selectedRegion.info.t
+                if t == REGION_VEC_SNAP_TAIL then
+                    local parent = vectors:get(selectedRegion.info.data.vecId)
+                    posExpr = parent.posExpr
+                elseif t == REGION_VEC_SNAP_TIP then
+                    posExpr = vecReferenceExpression(selectedRegion.info.data.vecId, function(v)
+                        return MBExpression.AddVecs:new(v.posExpr, v.valueExpr)
+                    end)
+                end
+            end
+
             local newVecId = vectors:add(MBVec:new(
                 MBExpression.FreeVector:new(vec3(0, 0, 0)),
-                MBExpression.FreeVector:new(vecStartPos)
+                posExpr
             ))
             activeAction = function(handPos)
-                vectors:get(newVecId).valueExpr:set(handPos - vecStartPos)
+                vectors:get(newVecId).valueExpr:set(handPos - handStartPos)
             end
         end
     elseif not trigger and lastTrigger then
@@ -94,6 +118,20 @@ function lovr.update()
             posHandlePos(vec.computedValue, vec.computedPos),
             0.03,
             MBRegionInfo:new(REGION_VEC_POS, {
+                vecId = id,
+            })
+        ))
+        table.insert(regions, MBSphereRegion:new(
+            vec.computedPos,
+            0.04,
+            MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
+                vecId = id,
+            })
+        ))
+        table.insert(regions, MBSphereRegion:new(
+            vec.computedPos + vec.computedValue,
+            0.04,
+            MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
                 vecId = id,
             })
         ))
@@ -143,4 +181,17 @@ end
 
 function posHandlePos(vecValue, vecPos)
     return vecPos + (vec3(vecValue):normalize() * HANDLE_DISTANCE)
+end
+
+function vecReferenceExpression(vecId, getExpression)
+    return {
+        evaluate = function()
+            local vec = vectors:get(vecId)
+            if not vec then
+                return MBExpressionResult:new("referenced missing vector " .. vecId, MBExpressionResult.TYPE_ERROR)
+            else
+                return getExpression(vec):evaluate()
+            end
+        end,
+    }
 end

@@ -1,3 +1,5 @@
+local inspect = require('inspect')
+
 local MBExpressionResult = require('data/mbexpressionresult')
 
 --[[
@@ -12,7 +14,7 @@ MBExpression = {}
 MBExpression.FreeVector = {}
 
 function MBExpression.FreeVector:new(default)
-    newObj = {
+    local newObj = {
         value = lovr.math.newVec3(default or vec3(1, 1, 1)),
     }
     self.__index = self
@@ -39,8 +41,8 @@ function MBExpression.AddVecs:new(left, right)
 end
 
 function MBExpression.AddVecs:evaluate()
-    leftResult = self.left.evaluate()
-    rightResult = self.right.evaluate()
+    leftResult = self.left:evaluate()
+    rightResult = self.right:evaluate()
 
     if
         leftResult.type ~= MBExpressionResult.TYPE_VECTOR
@@ -49,7 +51,7 @@ function MBExpression.AddVecs:evaluate()
         return MBExpressionResult:new("Expected two vectors, got " .. leftResult.type .. " and " .. rightResult.type)
     end
 
-    return MBExpressionResult:new(leftResult + rightResult, MBExpressionResult.TYPE_VECTOR)
+    return MBExpressionResult:new(leftResult.value + rightResult.value, MBExpressionResult.TYPE_VECTOR)
 end
 
 -----------------------
