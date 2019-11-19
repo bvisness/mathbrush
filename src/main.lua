@@ -55,7 +55,9 @@ function lovr.update()
             local t = selectedRegion.info.t
             if t == REGION_VEC_SELECT then
                 local vecId = selectedRegion.info.data.vecId
-                table.insert(selectedVecs, vecId)
+                if not contains(selectedVecs, vecId) then
+                    table.insert(selectedVecs, vecId)
+                end
                 activeAction = function() end
             elseif t == REGION_VEC_VALUE then
                 local vecId = selectedRegion.info.data.vecId
@@ -78,7 +80,6 @@ function lovr.update()
 
                 vectors:add(MBVec:new(
                     multiVecReferenceExpression({vec1Id, vec2Id}, function(vecs)
-                        print(inspect(vecs))
                         return MBExpression.CrossVecs:new(
                             vecs[vec1Id].valueExpr,
                             vecs[vec2Id].valueExpr
@@ -112,12 +113,21 @@ function lovr.update()
                 end
             end
 
-            local newVecId = vectors:add(MBVec:new(
-                MBExpression.FreeVector:new(vec3(0, 0, 0)),
-                posExpr
-            ))
+            local didAddVec = false
+            local newVecId = -1
+
             activeAction = function(handPos)
-                vectors:get(newVecId).valueExpr:set(handPos - handStartPos)
+                if not didAddVec and (handPos - handStartPos):length() > 0.02 then
+                    didAddVec = true
+
+                    newVecId = vectors:add(MBVec:new(
+                        MBExpression.FreeVector:new(vec3(0, 0, 0)),
+                        posExpr
+                    ))
+                elseif didAddVec then
+                    assert(newVecId ~= -1)
+                    vectors:get(newVecId).valueExpr:set(handPos - handStartPos)
+                end
             end
 
             selectedVecs = {}
@@ -140,20 +150,24 @@ function lovr.update()
                 vecId = id,
             })
         ))
-        table.insert(regions, MBSphereRegion:new(
-            valueHandlePos(vec.computedValue, vec.computedPos),
-            0.03,
-            MBRegionInfo:new(REGION_VEC_VALUE, {
-                vecId = id,
-            })
-        ))
-        table.insert(regions, MBSphereRegion:new(
-            posHandlePos(vec.computedValue, vec.computedPos),
-            0.03,
-            MBRegionInfo:new(REGION_VEC_POS, {
-                vecId = id,
-            })
-        ))
+        if instanceof(vec.valueExpr, MBExpression.FreeVector) then
+            table.insert(regions, MBSphereRegion:new(
+                valueHandlePos(vec.computedValue, vec.computedPos),
+                0.03,
+                MBRegionInfo:new(REGION_VEC_VALUE, {
+                    vecId = id,
+                })
+            ))
+        end
+        if instanceof(vec.posExpr, MBExpression.FreeVector) then
+            table.insert(regions, MBSphereRegion:new(
+                posHandlePos(vec.computedValue, vec.computedPos),
+                0.03,
+                MBRegionInfo:new(REGION_VEC_POS, {
+                    vecId = id,
+                })
+            ))
+        end
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos,
             0.04,
@@ -210,12 +224,7 @@ function lovr.draw()
     end
 
     for _, region in pairs(regions) do
-        -- local c = lovr.graphics.getColor()
-        -- lovr.graphics.setColor(0xff0000)
-
         lovr.graphics.sphere(regionMaterial, region.center, region.radius)
-
-        -- lovr.graphics.setColor(c)
     end
 end
 
@@ -274,4 +283,16 @@ function contains(t, v)
     end
 
     return false
+end
+
+function instanceof (subject, super)
+    super = tostring(super)
+    local mt = getmetatable(subject)
+
+    while true do
+        if mt == nil then return false end
+        if tostring(mt) == super then return true end
+
+        mt = getmetatable(mt)
+    end
 end
