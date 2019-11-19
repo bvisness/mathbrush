@@ -234,6 +234,7 @@ function lovr.draw()
 
         local rot = quat(vec3(value):normalize())
 
+        vecMaterial:setColor(vec.color)
         local mat = contains(selectedVecs, id) and selectedVecMaterial or vecMaterial
 
         lovr.graphics.cylinder(mat, pos + vec3(value):normalize() * length / 2, length, rot, 0.01, 0.01)
