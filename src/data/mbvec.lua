@@ -6,8 +6,6 @@ MBVec = {}
 MBVec.PARENT_TIP = 'tip'
 MBVec.PARENT_TAIL = 'tail'
 
-MBVec.REGION_VEC_VALUE = 'mbvec.value'
-
 -- All arguments must be _expressions_, not just values.
 function MBVec:new(valueExpr, posExpr)
     local initialValue = valueExpr:evaluate().value

@@ -5,8 +5,10 @@ local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
 local MBVec = require('data/mbvec')
 
-local ACTION_NEW_VECTOR = 'main.newvec'
-local ACTION_VEC_VALUE = 'main.vecvalue'
+local REGION_VEC_VALUE = 'mbvec.value'
+local REGION_VEC_POS = 'mbvec.pos'
+
+local HANDLE_DISTANCE = 0.05
 
 all_trackable_devices = {
     ['hand/left'] = {
@@ -44,12 +46,20 @@ function lovr.update()
         end
 
         if selectedRegion then
-            local t = selectedRegion.info.type
-            if t == MBVec.REGION_VEC_VALUE then
+            local t = selectedRegion.info.t
+            if t == REGION_VEC_VALUE then
+                local vecId = selectedRegion.info.data.vecId
                 activeAction = function(handPos)
-                    local activeVec = selectedRegion.info.data.vecId
-                    local pos = vectors:get(activeVec).computedPos
-                    vectors:get(activeVec).valueExpr:set(handPos - pos)
+                    local pos = vectors:get(vecId).computedPos
+                    vectors:get(vecId).valueExpr:set(handPos - pos)
+                end
+            elseif t == REGION_VEC_POS then
+                local vecId = selectedRegion.info.data.vecId
+                local vecStartPos = lovr.math.newVec3(vectors:get(vecId).computedPos)
+                local handStartPos = lovr.math.newVec3(handPos)
+                activeAction = function(handPos)
+                    -- TODO: Add ability to snap to other vectors
+                    vectors:get(vecId).posExpr:set(vecStartPos + (handPos - handStartPos))
                 end
             end
         else
@@ -76,7 +86,14 @@ function lovr.update()
         table.insert(regions, MBSphereRegion:new(
             valueHandlePos(vec.computedValue, vec.computedPos),
             0.03,
-            MBRegionInfo:new(MBVec.REGION_VEC_VALUE, {
+            MBRegionInfo:new(REGION_VEC_VALUE, {
+                vecId = id,
+            })
+        ))
+        table.insert(regions, MBSphereRegion:new(
+            posHandlePos(vec.computedValue, vec.computedPos),
+            0.03,
+            MBRegionInfo:new(REGION_VEC_POS, {
                 vecId = id,
             })
         ))
@@ -121,6 +138,9 @@ function pose2mat4(x, y, z, angle, ax, ay, az)
 end
 
 function valueHandlePos(vecValue, vecPos)
-    local distance = 0.05
-    return vecPos + vecValue - (vec3(vecValue):normalize() * distance)
+    return vecPos + vecValue - (vec3(vecValue):normalize() * HANDLE_DISTANCE)
+end
+
+function posHandlePos(vecValue, vecPos)
+    return vecPos + (vec3(vecValue):normalize() * HANDLE_DISTANCE)
 end
