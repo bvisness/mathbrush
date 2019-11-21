@@ -148,7 +148,46 @@ function lovr.update()
                         ))
                     elseif didAddVec then
                         assert(newVecId ~= -1)
-                        vectors:get(newVecId).freeValue:set(handPos - handStartPos)
+
+                        local v = vectors:get(newVecId)
+
+                        local snapRegions = filter(getRegionsContainingPoint(regions, handPos), function(v)
+                            return (
+                                v.info.type == REGION_VEC_SNAP_TIP
+                                and v.info.data.vecId ~= newVecId
+                            )
+                        end)
+
+                        local didSnap = false
+                        if #snapRegions > 0 then
+                            if selectedRegion and selectedRegion.info.type == REGION_VEC_SNAP_TIP then
+                                local baseId = selectedRegion.info.data.vecId
+                                local otherId = snapRegions[1].info.data.vecId
+
+                                if baseId ~= otherId then
+                                    local basePos, baseAbsolute = vectors:get(baseId):posFunc(vectors)
+                                    local otherPos, otherAbsolute = vectors:get(otherId):posFunc(vectors)
+
+                                    if baseAbsolute and otherAbsolute then
+                                        v.valueFunc = function(_, vecs)
+                                            local base = vecs:get(baseId)
+                                            local other = vecs:get(otherId)
+
+                                            local basePos, baseAbsolute = base:posFunc(vecs)
+                                            local otherPos, otherAbsolute = other:posFunc(vecs)
+
+                                            return (otherPos + other:valueFunc(vecs)) - (basePos + base:valueFunc(vecs));
+                                        end
+                                        didSnap = true
+                                    end
+                                end
+                            end
+                        end
+
+                        if not didSnap then
+                            v:makeFreeValue()
+                            v.freeValue:set(handPos - handStartPos)
+                        end
                     end
                 end
             end
