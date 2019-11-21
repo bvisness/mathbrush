@@ -58,11 +58,7 @@ function lovr.update()
                 local vecId = selectedRegion.info.data.vecId
                 local vecStartValue = lovr.math.newVec3(vectors:get(vecId).computedValue)
                 local handStartPos = lovr.math.newVec3(handPos)
-                activeAction = function(handPos)
-                    local v = vectors:get(vecId)
-                    v:makeFreeValue()
-                    v.freeValue:set(vecStartValue + (handPos - handStartPos))
-                end
+                activeAction = actionVecValue(vecId, vecStartValue, handStartPos)
             elseif t == REGION_VEC_POS then
                 local vecId = selectedRegion.info.data.vecId
                 local vecStartPos = lovr.math.newVec3(vectors:get(vecId).computedPos)
@@ -137,57 +133,20 @@ function lovr.update()
 
                 local didAddVec = false
                 local newVecId = -1
+                local vecValueAction = nil
 
                 activeAction = function(handPos)
                     if not didAddVec and (handPos - handStartPos):length() > 0.02 then
-                        didAddVec = true
-
                         newVecId = vectors:add(MBVec:new(
                             handPos - handStartPos,
                             posFunc or handStartPos
                         ))
+
+                        didAddVec = true
+                        vecValueAction = actionVecValue(newVecId, lovr.math.newVec3(0, 0, 0), handStartPos)
                     elseif didAddVec then
                         assert(newVecId ~= -1)
-
-                        local v = vectors:get(newVecId)
-
-                        local snapRegions = filter(getRegionsContainingPoint(regions, handPos), function(v)
-                            return (
-                                v.info.type == REGION_VEC_SNAP_TIP
-                                and v.info.data.vecId ~= newVecId
-                            )
-                        end)
-
-                        local didSnap = false
-                        if #snapRegions > 0 then
-                            if selectedRegion and selectedRegion.info.type == REGION_VEC_SNAP_TIP then
-                                local baseId = selectedRegion.info.data.vecId
-                                local otherId = snapRegions[1].info.data.vecId
-
-                                if baseId ~= otherId then
-                                    local basePos, baseAbsolute = vectors:get(baseId):posFunc(vectors)
-                                    local otherPos, otherAbsolute = vectors:get(otherId):posFunc(vectors)
-
-                                    if baseAbsolute and otherAbsolute then
-                                        v.valueFunc = function(_, vecs)
-                                            local base = vecs:get(baseId)
-                                            local other = vecs:get(otherId)
-
-                                            local basePos, baseAbsolute = base:posFunc(vecs)
-                                            local otherPos, otherAbsolute = other:posFunc(vecs)
-
-                                            return (otherPos + other:valueFunc(vecs)) - (basePos + base:valueFunc(vecs));
-                                        end
-                                        didSnap = true
-                                    end
-                                end
-                            end
-                        end
-
-                        if not didSnap then
-                            v:makeFreeValue()
-                            v.freeValue:set(handPos - handStartPos)
-                        end
+                        vecValueAction(handPos)
                     end
                 end
             end
@@ -322,6 +281,46 @@ function lovr.draw()
 
     for _, gizmo in ipairs(gizmos) do
         gizmo:draw()
+    end
+end
+
+function actionVecValue(vecId, vecStartValue, handStartPos)
+    return function(handPos)
+        local v = vectors:get(vecId)
+
+        local snapRegions = filter(getRegionsContainingPoint(regions, handPos), function(v)
+            return (
+                v.info.type == REGION_VEC_SNAP_TIP
+                and v.info.data.vecId ~= vecId
+            )
+        end)
+
+        local didSnap = false
+        if #snapRegions > 0 then
+            local otherId = snapRegions[1].info.data.vecId
+
+            if vecId ~= otherId then
+                local pos, absolute = v:posFunc(vectors)
+                local otherPos, otherAbsolute = vectors:get(otherId):posFunc(vectors)
+
+                if absolute and otherAbsolute then
+                    v.valueFunc = function(self, vecs)
+                        local pos, absolute = self:posFunc(vecs)
+
+                        local other = vecs:get(otherId)
+                        local otherPos, otherAbsolute = other:posFunc(vecs)
+
+                        return (otherPos + other:valueFunc(vecs)) - pos;
+                    end
+                    didSnap = true
+                end
+            end
+        end
+
+        if not didSnap then
+            v:makeFreeValue()
+            v.freeValue:set(vecStartValue + (handPos - handStartPos))
+        end
     end
 end
 
