@@ -1,12 +1,8 @@
 local inspect = require('inspect')
 
-local MBExpression = require('data/mbexpression')
-local MBExpressionResult = require('data/mbexpressionresult')
+local MBMathResult = require('data/mbmathresult')
 
 MBVec = {}
-
-MBVec.PARENT_TIP = 'tip'
-MBVec.PARENT_TAIL = 'tail'
 
 VEC_COLORS = {
     0xaaaaff,
@@ -17,22 +13,32 @@ VEC_COLORS = {
 }
 currentColor = 1
 
--- All arguments must be _expressions_, not just values.
-function MBVec:new(valueExpr, posExpr)
-    local initialValue = valueExpr:evaluate().value
-    local initialPos = posExpr:evaluate().value
+function MBVec:new(value, pos, parentId, hidden)
+    local freeValue, freePos = nil, nil
 
+    if type(value) ~= 'function' then
+        freeValue = value
+    end
+    if type(pos) ~= 'function' then
+        freePos = pos
+    end
+
+    self.__index = self
     local newObj = {
-        valueExpr = valueExpr,
-        posExpr = posExpr,
+        valueFunc = freeValue and self.freeValueFunc or value,
+        posFunc = freePos and self.freePosFunc or pos,
 
-        computedValue = initialValue,
-        computedPos = initialPos,
+        computedValue = lovr.math.newVec3(0, 0, 0),
+        computedPos = lovr.math.newVec3(0, 0, 0),
+
+        freeValue = lovr.math.newVec3(freeValue or vec3(0, 0, 0)),
+        freePos = lovr.math.newVec3(freePos or vec3(0, 0, 0)),
 
         color = VEC_COLORS[currentColor],
+        hidden = hidden or false,
     }
-    self.__index = self
 
+    -- increment color
     currentColor = (currentColor % #VEC_COLORS) + 1
 
     return setmetatable(newObj, self)
@@ -42,16 +48,42 @@ function vstring(v)
     return "(" .. v.x .. ", " .. v.y .. ", " .. v.z .. ")"
 end
 
-function MBVec:update()
-    local valueResult = self.valueExpr:evaluate()
-    local posResult = self.posExpr:evaluate()
+function MBVec:update(vectorList)
+    local valueResult = self:valueFunc(vectorList)
+    local posResult = self:posFunc(vectorList)
 
     -- handle evaluation errors and their updates here?
 
-    self.computedValue = valueResult.value
-    self.computedPos = posResult.value
+    self.computedValue:set(valueResult.value)
+    self.computedPos:set(posResult.value)
 
     return valueResult.value, posResult.value
+end
+
+function MBVec:freeValueFunc()
+    return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(self.freeValue))
+end
+
+function MBVec:freePosFunc()
+    return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(self.freePos))
+end
+
+function MBVec:makeFreeValue()
+    self.freeValue = self.computedValue
+    self.valueFunc = self.freeValueFunc
+end
+
+function MBVec:makeFreePos()
+    self.freePos = self.computedPos
+    self.posFunc = self.freePosFunc
+end
+
+function MBVec:isFreeValue()
+    return self.valueFunc == self.freeValueFunc
+end
+
+function MBVec:isFreePos()
+    return self.posFunc == self.freePosFunc
 end
 
 return MBVec

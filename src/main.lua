@@ -1,6 +1,6 @@
 local inspect = require('inspect')
 local CrossGizmo = require('gizmos/crossgizmo')
-local MBExpression = require('data/mbexpression')
+local MBMathResult = require('data/mbmathresult')
 local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
@@ -13,8 +13,6 @@ local REGION_VEC_SNAP_TIP = 'REGION_VEC_SNAP_TIP'
 local REGION_VEC_SNAP_TAIL = 'REGION_VEC_SNAP_TAIL'
 
 local REGION_2VEC_ADD_CROSS = 'REGION_2VEC_ADD_CROSS'
-
-local VALUE_HANDLE_DISTANCE = 0.10
 
 all_trackable_devices = {
     ['hand/left'] = {
@@ -67,14 +65,12 @@ function lovr.update()
                 activeAction = function() end
             elseif t == REGION_VEC_VALUE then
                 local vecId = selectedRegion.info.data.vecId
+                local vecStartValue = lovr.math.newVec3(vectors:get(vecId).computedValue)
+                local handStartPos = lovr.math.newVec3(handPos)
                 activeAction = function(handPos)
-                    local pos = vectors:get(vecId).posExpr:evaluate().value
-                    -- TODO: Handle error, I guess
-
-                    local toHand = vec3(handPos) - vec3(pos) -- paranoia!
-                    local handDistance = toHand:length()
-                    local finalLength = handDistance + VALUE_HANDLE_DISTANCE
-                    vectors:get(vecId).valueExpr:set(toHand * (finalLength / handDistance))
+                    local v = vectors:get(vecId)
+                    v:makeFreeValue()
+                    v.freeValue:set(vecStartValue + (handPos - handStartPos))
                 end
             elseif t == REGION_VEC_POS then
                 local vecId = selectedRegion.info.data.vecId
@@ -82,22 +78,26 @@ function lovr.update()
                 local handStartPos = lovr.math.newVec3(handPos)
                 activeAction = function(handPos)
                     -- TODO: Add ability to snap to other vectors
-                    vectors:get(vecId).posExpr:set(vecStartPos + (handPos - handStartPos))
+                    local v = vectors:get(vecId)
+                    v:makeFreePos()
+                    v.freePos:set(vecStartPos + (handPos - handStartPos))
                 end
             elseif t == REGION_2VEC_ADD_CROSS then
                 local vec1Id = selectedRegion.info.data.vec1Id
                 local vec2Id = selectedRegion.info.data.vec2Id
 
                 vectors:add(MBVec:new(
-                    multiVecReferenceExpression({vec1Id, vec2Id}, function(vecs)
-                        return MBExpression.CrossVecs:new(
-                            vecs[vec1Id].valueExpr,
-                            vecs[vec2Id].valueExpr
-                        )
-                    end),
-                    vecReferenceExpression(vec1Id, function(v)
-                        return v.posExpr
-                    end)
+                    function(vecs)
+                        -- TODO: Check for errors and wrong result types
+                        local v1value = vecs:get(vec1Id).valueFunc(vecs).value
+                        local v2value = vecs:get(vec2Id).valueFunc(vecs).value
+                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(v1value):cross(v2value))
+                    end,
+                    function(vecs)
+                        -- TODO: Check for errors
+                        local pos = vecs:get(vec1Id).posFunc(vecs).value
+                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(pos))
+                    end
                 ))
 
                 activeAction = function() end
@@ -111,17 +111,24 @@ function lovr.update()
             -- Make a new vector.
 
             local handStartPos = lovr.math.newVec3(handPos)
+            local posFunc = nil
 
-            local posExpr = MBExpression.FreeVector:new(handStartPos)
             if selectedRegion then
                 local t = selectedRegion.info.t
                 if t == REGION_VEC_SNAP_TAIL then
-                    local parent = vectors:get(selectedRegion.info.data.vecId)
-                    posExpr = parent.posExpr
+                    local other = vectors:get(selectedRegion.info.data.vecId)
+                    if other:isFreePos() then
+                        posFunc = other.freePos
+                    else
+                        posFunc = other.posFunc
+                    end
                 elseif t == REGION_VEC_SNAP_TIP then
-                    posExpr = vecReferenceExpression(selectedRegion.info.data.vecId, function(v)
-                        return MBExpression.AddVecs:new(v.posExpr, v.valueExpr)
-                    end)
+                    local vecId = selectedRegion.info.data.vecId
+                    posFunc = function(_, vecs)
+                        local v = vecs:get(vecId)
+                        local pos = vec3(v:posFunc(vecs).value) + vec3(v:valueFunc(vecs).value)
+                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, pos)
+                    end
                 end
             end
 
@@ -133,12 +140,12 @@ function lovr.update()
                     didAddVec = true
 
                     newVecId = vectors:add(MBVec:new(
-                        MBExpression.FreeVector:new(vec3(0, 0, 0)),
-                        posExpr
+                        handPos - handStartPos,
+                        posFunc or handStartPos
                     ))
                 elseif didAddVec then
                     assert(newVecId ~= -1)
-                    vectors:get(newVecId).valueExpr:set(handPos - handStartPos)
+                    vectors:get(newVecId).freeValue:set(handPos - handStartPos)
                 end
             end
 
@@ -154,7 +161,7 @@ function lovr.update()
 
     regions = {}
     for id, vec in pairs(vectors.objs) do
-        vec:update()
+        vec:update(vectors)
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos + vec.computedValue / 2,
             0.07,
@@ -162,7 +169,7 @@ function lovr.update()
                 vecId = id,
             })
         ))
-        if instanceof(vec.valueExpr, MBExpression.FreeVector) then
+        -- if instanceof(vec.valueExpr, MBExpression.FreeVector) then
             table.insert(regions, MBSphereRegion:new(
                 valueHandlePos(vec.computedValue, vec.computedPos),
                 0.07,
@@ -170,8 +177,8 @@ function lovr.update()
                     vecId = id,
                 })
             ))
-        end
-        if instanceof(vec.posExpr, MBExpression.FreeVector) then
+        -- end
+        -- if instanceof(vec.posExpr, MBExpression.FreeVector) then
             table.insert(regions, MBSphereRegion:new(
                 posHandlePos(vec.computedValue, vec.computedPos),
                 0.07,
@@ -179,7 +186,7 @@ function lovr.update()
                     vecId = id,
                 })
             ))
-        end
+        -- end
         table.insert(regions, MBSphereRegion:new(
             vec.computedPos,
             0.07,
@@ -263,42 +270,11 @@ function pose2mat4(x, y, z, angle, ax, ay, az)
 end
 
 function valueHandlePos(vecValue, vecPos)
-    return vecPos + vecValue - (vec3(vecValue):normalize() * VALUE_HANDLE_DISTANCE)
+    return vecPos + vecValue - (vec3(vecValue):normalize() * 0.10)
 end
 
 function posHandlePos(vecValue, vecPos)
     return vecPos + (vec3(vecValue):normalize() * 0.05)
-end
-
-function vecReferenceExpression(vecId, getExpression)
-    return {
-        evaluate = function()
-            local vec = vectors:get(vecId)
-            if not vec then
-                return MBExpressionResult:new("referenced missing vector " .. vecId, MBExpressionResult.TYPE_ERROR)
-            else
-                return getExpression(vec):evaluate()
-            end
-        end,
-    }
-end
-
-function multiVecReferenceExpression(vecIds, getExpression)
-    return {
-        evaluate = function()
-            local vecs = {}
-            for _, vecId in ipairs(vecIds) do
-                local vec = vectors:get(vecId)
-                if not vec then
-                    return MBExpressionResult:new("referenced missing vector " .. vecId, MBExpressionResult.TYPE_ERROR)
-                else
-                    vecs[vecId] = vec
-                end
-            end
-
-            return getExpression(vecs):evaluate()
-        end
-    }
 end
 
 function contains(t, v)
