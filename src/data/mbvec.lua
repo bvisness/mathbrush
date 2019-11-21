@@ -11,6 +11,9 @@ VEC_COLORS = {
 }
 currentColor = 1
 
+VEC_LABELS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+currentLabel = 1
+
 function MBVec:new(value, pos, isPoint)
     local freeValue, freePos = nil, nil
 
@@ -32,10 +35,12 @@ function MBVec:new(value, pos, isPoint)
         freeValue = lovr.math.newVec3(freeValue or vec3(0, 0, 0)),
         freePos = lovr.math.newVec3(freePos or vec3(0, 0, 0)),
 
+        label = VEC_LABELS:sub(currentLabel, currentLabel),
         color = VEC_COLORS[currentColor],
     }
 
-    -- increment color
+    -- increment stuff
+    currentLabel = (currentLabel % #VEC_LABELS) + 1
     currentColor = (currentColor % #VEC_COLORS) + 1
 
     return setmetatable(newObj, self)

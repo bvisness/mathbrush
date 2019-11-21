@@ -276,6 +276,18 @@ function lovr.draw()
 
         if vec:isPoint() then
             lovr.graphics.sphere(mat, pos + value, 0.02)
+
+            local toHeadset = vec3(lovr.headset.getPosition()) - value;
+            local viewRight = vec3(0, 1, 0):cross(toHeadset):normalize()
+            local viewUp = vec3(toHeadset):cross(viewRight):normalize()
+            local labelOffset = (viewRight * -0.07) + (viewUp * -0.07)
+            local labelPos = value + labelOffset;
+            lovr.graphics.print(
+                vec.label,
+                labelPos,
+                0.1,
+                quat(mat4():lookAt(vec3(lovr.headset.getPosition()), labelPos))
+            )
         else
             local TIP_LENGTH = 0.07
 
@@ -287,6 +299,16 @@ function lovr.draw()
                 mat,
                 pos + value - vec3(value):normalize() * TIP_LENGTH / 2,
                 TIP_LENGTH, rot, 0, 0.03
+            )
+
+            local halfway = pos + (value / 2)
+            local labelOffset = vec3(value):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * 0.07
+            local labelPos = halfway + labelOffset;
+            lovr.graphics.print(
+                vec.label,
+                labelPos,
+                0.1,
+                quat(mat4():lookAt(vec3(lovr.headset.getPosition()), labelPos))
             )
         end
     end
