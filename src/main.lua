@@ -88,15 +88,31 @@ function lovr.update()
                 local vec2Id = selectedRegion.info.data.vec2Id
 
                 vectors:add(MBVec:new(
-                    function(_, vecs)
+                    function(self, vecs, visited)
+                        visited = visited or {}
+                        if visited[vec1Id] or visited[vec2Id] then
+                            print(
+                                "Cycle detected in cross product value: "
+                                .. (visited[vec1Id] and "already visited vector " .. vec1Id .. ", ")
+                                .. (visited[vec2Id] and "already visited vector " .. vec2Id)
+                            )
+                            return self.computedValue
+                        end
+
                         -- TODO: Check for errors and wrong result types
-                        local v1value = vecs:get(vec1Id):valueFunc(vecs)
-                        local v2value = vecs:get(vec2Id):valueFunc(vecs)
+                        local v1value = vecs:get(vec1Id):valueFunc(vecs, visit(visited, vec1Id))
+                        local v2value = vecs:get(vec2Id):valueFunc(vecs, visit(visited, vec2Id))
                         return vec3(v1value):cross(v2value)
                     end,
-                    function(_, vecs)
+                    function(self, vecs, visited)
+                        visited = visited or {}
+                        if visited[vec1Id] then
+                            print("Cycle detected in cross product pos: already visited vector " .. vec1Id)
+                            return self.computedPos
+                        end
+
                         -- TODO: Check for errors
-                        return vecs:get(vec1Id):posFunc(vecs)
+                        return vecs:get(vec1Id):posFunc(vecs, visit(visited, vec1Id))
                     end
                 ))
 
@@ -304,13 +320,21 @@ function actionVecValue(vecId, vecStartValue, handStartPos)
                 local otherPos, otherAbsolute = vectors:get(otherId):posFunc(vectors)
 
                 if absolute and otherAbsolute then
-                    v.valueFunc = function(self, vecs)
-                        local pos, absolute = self:posFunc(vecs)
+                    v.valueFunc = function(self, vecs, visited)
+                        local visited = visited or {}
+
+                        local pos, absolute = self:posFunc(vecs, visited)
+
+                        if visited[otherId] then
+                            print("Cycle detected in subtraction value func: already visited vector " .. otherId)
+                            return self.computedValue
+                        end
+                        local newVisited = visit(visited, otherId)
 
                         local other = vecs:get(otherId)
-                        local otherPos, otherAbsolute = other:posFunc(vecs)
+                        local otherPos, otherAbsolute = other:posFunc(vecs, newVisited)
 
-                        return (otherPos + other:valueFunc(vecs)) - pos;
+                        return (otherPos + other:valueFunc(vecs, newVisited)) - pos;
                     end
                     didSnap = true
                 end
@@ -350,7 +374,7 @@ function contains(t, v)
     return false
 end
 
-function instanceof (subject, super)
+function instanceof(subject, super)
     super = tostring(super)
     local mt = getmetatable(subject)
 
@@ -416,11 +440,30 @@ function map(t, f)
     return result
 end
 
+function visit(t, id)
+    local result = {}
+    for k, v in pairs(t) do
+        result[v] = v
+    end
+    t[id] = true
+
+    return result
+end
+
 function posFuncSnapToTip(vecId)
-    return function(_, vecs)
+    return function(self, vecs, visited)
+        local visited = visited or {}
+
+        if visited[vecId] then
+            print("Cycle detected in posFuncSnapToTip: already visited vector " .. vecId)
+            return self.computedPos
+        end
+
+        local newVisited = visit(visited or {}, vecId)
+
         local v = vecs:get(vecId)
-        local val = v:valueFunc(vecs)
-        local pos, absolute = v:posFunc(vecs)
+        local val = v:valueFunc(vecs, newVisited)
+        local pos, absolute = v:posFunc(vecs, newVisited)
         return pos + val, absolute
     end
 end
