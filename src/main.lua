@@ -87,15 +87,15 @@ function lovr.update()
                 local vec2Id = selectedRegion.info.data.vec2Id
 
                 vectors:add(MBVec:new(
-                    function(vecs)
+                    function(_, vecs)
                         -- TODO: Check for errors and wrong result types
-                        local v1value = vecs:get(vec1Id).valueFunc(vecs).value
-                        local v2value = vecs:get(vec2Id).valueFunc(vecs).value
+                        local v1value = vecs:get(vec1Id):valueFunc(vecs).value
+                        local v2value = vecs:get(vec2Id):valueFunc(vecs).value
                         return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(v1value):cross(v2value))
                     end,
-                    function(vecs)
+                    function(_, vecs)
                         -- TODO: Check for errors
-                        local pos = vecs:get(vec1Id).posFunc(vecs).value
+                        local pos = vecs:get(vec1Id):posFunc(vecs).value
                         return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(pos))
                     end
                 ))
