@@ -31,8 +31,9 @@ end
 
 regions = {}
 lastTrigger = false
-activeAction = nil
 selectedVecs = {}
+activeAction = nil
+activeVecs = {}
 gizmos = {}
 function lovr.update()
     gizmos = {}
@@ -44,19 +45,10 @@ function lovr.update()
         assert(activeAction == nil)
 
         -- See if you are clicking on a region
-        local selectedRegion, minDist = nil, -1
-        for _, region in ipairs(regions) do
-            inside, dist = region:checkPoint(handPos)
-            if inside then
-                if not selectedRegion or dist < minDist then
-                    selectedRegion = region
-                    minDist = dist
-                end
-            end
-        end
+        local selectedRegion = getRegionsContainingPoint(regions, handPos)[1]
 
         if selectedRegion then
-            local t = selectedRegion.info.t
+            local t = selectedRegion.info.type
             if t == REGION_VEC_SELECT then
                 local vecId = selectedRegion.info.data.vecId
                 if not contains(selectedVecs, vecId) then
@@ -77,11 +69,25 @@ function lovr.update()
                 local vecStartPos = lovr.math.newVec3(vectors:get(vecId).computedPos)
                 local handStartPos = lovr.math.newVec3(handPos)
                 activeAction = function(handPos)
-                    -- TODO: Add ability to snap to other vectors
+                    local newPos = vecStartPos + (handPos - handStartPos)
+                    local snapRegions = groupBy(getRegionsContainingPoint(regions, newPos), function(v) return v.info.type end)
+
+                    local tips = snapRegions[REGION_VEC_SNAP_TIP]
+                    local tails = snapRegions[REGION_VEC_SNAP_TAIL]
+
                     local v = vectors:get(vecId)
-                    v:makeFreePos()
-                    v.freePos:set(vecStartPos + (handPos - handStartPos))
+                    if tips then
+                        v.posFunc = posFuncSnapToTip(tips[1].info.data.vecId)
+                    else
+                        v:makeFreePos()
+                        v.freePos:set(
+                            (tips and tips[1].center)
+                            or (tails and tails[1].center)
+                            or newPos
+                        )
+                    end
                 end
+                activeVecs = {vecId}
             elseif t == REGION_2VEC_ADD_CROSS then
                 local vec1Id = selectedRegion.info.data.vec1Id
                 local vec2Id = selectedRegion.info.data.vec2Id
@@ -114,7 +120,7 @@ function lovr.update()
             local posFunc = nil
 
             if selectedRegion then
-                local t = selectedRegion.info.t
+                local t = selectedRegion.info.type
                 if t == REGION_VEC_SNAP_TAIL then
                     local other = vectors:get(selectedRegion.info.data.vecId)
                     if other:isFreePos() then
@@ -124,11 +130,7 @@ function lovr.update()
                     end
                 elseif t == REGION_VEC_SNAP_TIP then
                     local vecId = selectedRegion.info.data.vecId
-                    posFunc = function(_, vecs)
-                        local v = vecs:get(vecId)
-                        local pos = vec3(v:posFunc(vecs).value) + vec3(v:valueFunc(vecs).value)
-                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, pos)
-                    end
+                    posFunc = posFuncSnapToTip(vecId)
                 end
             end
 
@@ -153,6 +155,7 @@ function lovr.update()
         end
     elseif not trigger and lastTrigger then
         activeAction = nil
+        activeVecs = {}
     end
 
     if activeAction then
@@ -169,38 +172,36 @@ function lovr.update()
                 vecId = id,
             })
         ))
-        -- if instanceof(vec.valueExpr, MBExpression.FreeVector) then
-            table.insert(regions, MBSphereRegion:new(
-                valueHandlePos(vec.computedValue, vec.computedPos),
-                0.07,
-                MBRegionInfo:new(REGION_VEC_VALUE, {
-                    vecId = id,
-                })
-            ))
-        -- end
-        -- if instanceof(vec.posExpr, MBExpression.FreeVector) then
-            table.insert(regions, MBSphereRegion:new(
-                posHandlePos(vec.computedValue, vec.computedPos),
-                0.07,
-                MBRegionInfo:new(REGION_VEC_POS, {
-                    vecId = id,
-                })
-            ))
-        -- end
         table.insert(regions, MBSphereRegion:new(
-            vec.computedPos,
+            valueHandlePos(vec.computedValue, vec.computedPos),
             0.07,
-            MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
+            MBRegionInfo:new(REGION_VEC_VALUE, {
                 vecId = id,
             })
         ))
         table.insert(regions, MBSphereRegion:new(
-            vec.computedPos + vec.computedValue,
+            posHandlePos(vec.computedValue, vec.computedPos),
             0.07,
-            MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
+            MBRegionInfo:new(REGION_VEC_POS, {
                 vecId = id,
             })
         ))
+        if not contains(activeVecs, id) then
+            table.insert(regions, MBSphereRegion:new(
+                vec.computedPos,
+                0.07,
+                MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
+                    vecId = id,
+                })
+            ))
+            table.insert(regions, MBSphereRegion:new(
+                vec.computedPos + vec.computedValue,
+                0.07,
+                MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
+                    vecId = id,
+                })
+            ))
+        end
     end
 
     if #selectedVecs == 2 then
@@ -296,5 +297,67 @@ function instanceof (subject, super)
         if tostring(mt) == super then return true end
 
         mt = getmetatable(mt)
+    end
+end
+
+-- Gets all regions containing p, sorted by distance, closest to furthest.
+function getRegionsContainingPoint(regions, p)
+    local containingRegions = {}
+
+    for _, region in ipairs(regions) do
+        inside, dist = region:checkPoint(p)
+        if inside then
+            table.insert(containingRegions, {
+                region = region,
+                dist = dist,
+            })
+        end
+    end
+
+    table.sort(containingRegions, function(a, b) return a.dist < b.dist end)
+
+    local result = {}
+    for i, v in ipairs(containingRegions) do
+        result[i] = v.region
+    end
+
+    return result
+end
+
+function filter(t, f)
+    local result = {}
+    for _, v in ipairs(t) do
+        if f(v) then
+            table.insert(result, v)
+        end
+    end
+    return result
+end
+
+function groupBy(t, f)
+    local result = {}
+    for _, v in ipairs(t) do
+        local key = f(v)
+        if not result[key] then
+            result[key] = {}
+        end
+        table.insert(result[key], v)
+    end
+    return result
+end
+
+function map(t, f)
+    local result = {}
+    for i, v in ipairs(t) do
+        result[i] = f(v)
+    end
+    return result
+end
+
+function posFuncSnapToTip(vecId)
+    return function(_, vecs)
+        local v = vecs:get(vecId)
+        local pos = vec3(v:posFunc(vecs).value) + vec3(v:valueFunc(vecs).value)
+        return MBMathResult:new(MBMathResult.TYPE_VECTOR, pos)
     end
 end

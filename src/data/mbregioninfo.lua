@@ -1,8 +1,8 @@
 MBRegionInfo = {}
 
-function MBRegionInfo:new(t, data)
+function MBRegionInfo:new(type, data)
     local newObj = {
-        t = t,
+        type = type,
         data = data,
     }
     self.__index = self
