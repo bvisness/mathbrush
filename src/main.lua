@@ -1,6 +1,5 @@
 local inspect = require('inspect')
 local CrossGizmo = require('gizmos/crossgizmo')
-local MBMathResult = require('data/mbmathresult')
 local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
@@ -95,14 +94,13 @@ function lovr.update()
                 vectors:add(MBVec:new(
                     function(_, vecs)
                         -- TODO: Check for errors and wrong result types
-                        local v1value = vecs:get(vec1Id):valueFunc(vecs).value
-                        local v2value = vecs:get(vec2Id):valueFunc(vecs).value
-                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(v1value):cross(v2value))
+                        local v1value = vecs:get(vec1Id):valueFunc(vecs)
+                        local v2value = vecs:get(vec2Id):valueFunc(vecs)
+                        return vec3(v1value):cross(v2value)
                     end,
                     function(_, vecs)
                         -- TODO: Check for errors
-                        local pos = vecs:get(vec1Id):posFunc(vecs).value
-                        return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(pos))
+                        return vecs:get(vec1Id):posFunc(vecs)
                     end
                 ))
 
@@ -116,38 +114,42 @@ function lovr.update()
             -- None of the regions we clicked above triggered their own action.
             -- Make a new vector.
 
-            local handStartPos = lovr.math.newVec3(handPos)
-            local posFunc = nil
+            if lovr.headset.isDown('hand/right', 'menu') then
+                vectors:add(MBVec:newPoint(handPos))
+            else
+                local handStartPos = lovr.math.newVec3(handPos)
+                local posFunc = nil
 
-            if selectedRegion then
-                local t = selectedRegion.info.type
-                if t == REGION_VEC_SNAP_TAIL then
-                    local other = vectors:get(selectedRegion.info.data.vecId)
-                    if other:isFreePos() then
-                        posFunc = other.freePos
-                    else
-                        posFunc = other.posFunc
+                if selectedRegion then
+                    local t = selectedRegion.info.type
+                    if t == REGION_VEC_SNAP_TAIL then
+                        local other = vectors:get(selectedRegion.info.data.vecId)
+                        if other:isFreePos() then
+                            posFunc = other.freePos
+                        else
+                            posFunc = other.posFunc
+                        end
+                    elseif t == REGION_VEC_SNAP_TIP then
+                        local vecId = selectedRegion.info.data.vecId
+                        posFunc = posFuncSnapToTip(vecId)
                     end
-                elseif t == REGION_VEC_SNAP_TIP then
-                    local vecId = selectedRegion.info.data.vecId
-                    posFunc = posFuncSnapToTip(vecId)
                 end
-            end
 
-            local didAddVec = false
-            local newVecId = -1
+                local didAddVec = false
+                local newVecId = -1
 
-            activeAction = function(handPos)
-                if not didAddVec and (handPos - handStartPos):length() > 0.02 then
-                    didAddVec = true
+                activeAction = function(handPos)
+                    if not didAddVec and (handPos - handStartPos):length() > 0.02 then
+                        didAddVec = true
 
-                    newVecId = vectors:add(MBVec:new(
-                        handPos - handStartPos,
-                        posFunc or handStartPos
-                    ))
-                elseif didAddVec then
-                    assert(newVecId ~= -1)
-                    vectors:get(newVecId).freeValue:set(handPos - handStartPos)
+                        newVecId = vectors:add(MBVec:new(
+                            handPos - handStartPos,
+                            posFunc or handStartPos
+                        ))
+                    elseif didAddVec then
+                        assert(newVecId ~= -1)
+                        vectors:get(newVecId).freeValue:set(handPos - handStartPos)
+                    end
                 end
             end
 
@@ -165,42 +167,60 @@ function lovr.update()
     regions = {}
     for id, vec in pairs(vectors.objs) do
         vec:update(vectors)
-        table.insert(regions, MBSphereRegion:new(
-            vec.computedPos + vec.computedValue / 2,
-            0.07,
-            MBRegionInfo:new(REGION_VEC_SELECT, {
-                vecId = id,
-            })
-        ))
-        table.insert(regions, MBSphereRegion:new(
-            valueHandlePos(vec.computedValue, vec.computedPos),
-            0.07,
-            MBRegionInfo:new(REGION_VEC_VALUE, {
-                vecId = id,
-            })
-        ))
-        table.insert(regions, MBSphereRegion:new(
-            posHandlePos(vec.computedValue, vec.computedPos),
-            0.07,
-            MBRegionInfo:new(REGION_VEC_POS, {
-                vecId = id,
-            })
-        ))
-        if not contains(activeVecs, id) then
+
+        if vec:isPoint() then
             table.insert(regions, MBSphereRegion:new(
-                vec.computedPos,
+                vec.computedValue,
                 0.07,
-                MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
+                MBRegionInfo:new(REGION_VEC_VALUE, {
                     vecId = id,
                 })
             ))
             table.insert(regions, MBSphereRegion:new(
-                vec.computedPos + vec.computedValue,
+                vec.computedValue,
                 0.07,
                 MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
                     vecId = id,
                 })
             ))
+        else
+            table.insert(regions, MBSphereRegion:new(
+                vec.computedPos + vec.computedValue / 2,
+                0.07,
+                MBRegionInfo:new(REGION_VEC_SELECT, {
+                    vecId = id,
+                })
+            ))
+            table.insert(regions, MBSphereRegion:new(
+                valueHandlePos(vec.computedValue, vec.computedPos),
+                0.07,
+                MBRegionInfo:new(REGION_VEC_VALUE, {
+                    vecId = id,
+                })
+            ))
+            table.insert(regions, MBSphereRegion:new(
+                posHandlePos(vec.computedValue, vec.computedPos),
+                0.07,
+                MBRegionInfo:new(REGION_VEC_POS, {
+                    vecId = id,
+                })
+            ))
+            if not contains(activeVecs, id) then
+                table.insert(regions, MBSphereRegion:new(
+                    vec.computedPos,
+                    0.07,
+                    MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
+                        vecId = id,
+                    })
+                ))
+                table.insert(regions, MBSphereRegion:new(
+                    vec.computedPos + vec.computedValue,
+                    0.07,
+                    MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
+                        vecId = id,
+                    })
+                ))
+            end
         end
     end
 
@@ -234,23 +254,27 @@ function lovr.draw()
     end
 
     for id, vec in pairs(vectors.objs) do
-        local TIP_LENGTH = 0.07
-
         local value = vec.computedValue
         local pos = vec.computedPos
-        local length = math.max(0.01, value:length() - 0.05)
-
-        local rot = quat(vec3(value):normalize())
 
         vecMaterial:setColor(vec.color)
         local mat = contains(selectedVecs, id) and selectedVecMaterial or vecMaterial
 
-        lovr.graphics.cylinder(mat, pos + vec3(value):normalize() * length / 2, length, rot, 0.01, 0.01)
-        lovr.graphics.cylinder(
-            mat,
-            pos + value - vec3(value):normalize() * TIP_LENGTH / 2,
-            TIP_LENGTH, rot, 0, 0.03
-        )
+        if vec:isPoint() then
+            lovr.graphics.sphere(mat, pos + value, 0.02)
+        else
+            local TIP_LENGTH = 0.07
+
+            local length = math.max(0.01, value:length() - 0.05)
+            local rot = quat(vec3(value):normalize())
+
+            lovr.graphics.cylinder(mat, pos + vec3(value):normalize() * length / 2, length, rot, 0.01, 0.01)
+            lovr.graphics.cylinder(
+                mat,
+                pos + value - vec3(value):normalize() * TIP_LENGTH / 2,
+                TIP_LENGTH, rot, 0, 0.03
+            )
+        end
     end
 
     -- for _, region in pairs(regions) do
@@ -357,7 +381,8 @@ end
 function posFuncSnapToTip(vecId)
     return function(_, vecs)
         local v = vecs:get(vecId)
-        local pos = vec3(v:posFunc(vecs).value) + vec3(v:valueFunc(vecs).value)
-        return MBMathResult:new(MBMathResult.TYPE_VECTOR, pos)
+        local val = v:valueFunc(vecs)
+        local pos, absolute = v:posFunc(vecs)
+        return pos + val, absolute
     end
 end

@@ -1,7 +1,5 @@
 local inspect = require('inspect')
 
-local MBMathResult = require('data/mbmathresult')
-
 MBVec = {}
 
 VEC_COLORS = {
@@ -13,7 +11,7 @@ VEC_COLORS = {
 }
 currentColor = 1
 
-function MBVec:new(value, pos, parentId, hidden)
+function MBVec:new(value, pos, isPoint)
     local freeValue, freePos = nil, nil
 
     if type(value) ~= 'function' then
@@ -35,7 +33,6 @@ function MBVec:new(value, pos, parentId, hidden)
         freePos = lovr.math.newVec3(freePos or vec3(0, 0, 0)),
 
         color = VEC_COLORS[currentColor],
-        hidden = hidden or false,
     }
 
     -- increment color
@@ -44,28 +41,36 @@ function MBVec:new(value, pos, parentId, hidden)
     return setmetatable(newObj, self)
 end
 
+function MBVec:newPoint(value)
+    return MBVec:new(value, MBVec.pointPosFunc)
+end
+
 function vstring(v)
     return "(" .. v.x .. ", " .. v.y .. ", " .. v.z .. ")"
 end
 
 function MBVec:update(vectorList)
-    local valueResult = self:valueFunc(vectorList)
-    local posResult = self:posFunc(vectorList)
+    local value = self:valueFunc(vectorList)
+    local pos = self:posFunc(vectorList)
 
     -- handle evaluation errors and their updates here?
 
-    self.computedValue:set(valueResult.value)
-    self.computedPos:set(posResult.value)
+    self.computedValue:set(value)
+    self.computedPos:set(pos)
 
-    return valueResult.value, posResult.value
+    return value, pos
 end
 
 function MBVec:freeValueFunc()
-    return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(self.freeValue))
+    return vec3(self.freeValue)
 end
 
 function MBVec:freePosFunc()
-    return MBMathResult:new(MBMathResult.TYPE_VECTOR, vec3(self.freePos))
+    return vec3(self.freePos), false
+end
+
+function MBVec:pointPosFunc()
+    return vec3(0, 0, 0), true
 end
 
 function MBVec:makeFreeValue()
@@ -84,6 +89,10 @@ end
 
 function MBVec:isFreePos()
     return self.posFunc == self.freePosFunc
+end
+
+function MBVec:isPoint()
+    return self.posFunc == self.pointPosFunc
 end
 
 return MBVec
