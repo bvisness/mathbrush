@@ -72,9 +72,9 @@ function lovr.update()
 
                     local v = vectors:get(vecId)
                     if tips then
-                        v.posFunc = posFuncSnapToTip(tips[1].info.data.vecId)
+                        v.parentId = tips[1].info.data.vecId
                     else
-                        v:makeFreePos()
+                        v.parentId = nil
                         v.freePos:set(
                             (tips and tips[1].center)
                             or (tails and tails[1].center)
@@ -107,18 +107,7 @@ function lovr.update()
                         local v2value, v2expr = v2:valueFunc(vecs, visit(visited, vec2Id))
                         return vec3(v1value):cross(v2value), v1expr .. ' x ' .. v2expr
                     end,
-                    function(self, vecs, visited)
-                        local v1 = vecs:get(vec1Id)
-
-                        visited = visited or {}
-                        if visited[vec1Id] then
-                            print("Cycle detected in cross product pos: already visited vector " .. v1.label)
-                            return self.computedPos
-                        end
-
-                        -- TODO: Check for errors
-                        return v1:posFunc(vecs, visit(visited, vec1Id))
-                    end
+                    vectors:get(vec1Id):getPosArgument()
                 ))
 
                 activeAction = function() end
@@ -135,20 +124,19 @@ function lovr.update()
                 vectors:add(MBVec:newPoint(handPos))
             else
                 local handStartPos = lovr.math.newVec3(handPos)
-                local posFunc = nil
+                local pos = handStartPos
 
                 if selectedRegion then
                     local t = selectedRegion.info.type
                     if t == REGION_VEC_SNAP_TAIL then
                         local other = vectors:get(selectedRegion.info.data.vecId)
-                        if other:isFreePos() then
-                            posFunc = other.freePos
+                        if other.parentId then
+                            pos = other.parentId -- TODO: Someday could we just add a notion of "region priority" and give priority to tips?
                         else
-                            posFunc = other.posFunc
+                            pos = other.freePos
                         end
                     elseif t == REGION_VEC_SNAP_TIP then
-                        local vecId = selectedRegion.info.data.vecId
-                        posFunc = posFuncSnapToTip(vecId)
+                        pos = selectedRegion.info.data.vecId
                     end
                 end
 
@@ -160,7 +148,7 @@ function lovr.update()
                     if not didAddVec and (handPos - handStartPos):length() > 0.02 then
                         newVecId = vectors:add(MBVec:new(
                             handPos - handStartPos,
-                            posFunc or handStartPos
+                            pos
                         ))
 
                         didAddVec = true
@@ -187,7 +175,7 @@ function lovr.update()
     for id, vec in pairs(vectors.objs) do
         vec:update(vectors)
 
-        if vec:isPoint() then
+        if vec.isPoint then
             table.insert(regions, MBSphereRegion:new(
                 vec.computedValue,
                 0.07,
@@ -247,7 +235,7 @@ function lovr.update()
         -- Check for cross product
         local v1 = vectors:get(selectedVecs[1])
         local v2 = vectors:get(selectedVecs[2])
-        if (v2.computedPos - v1.computedPos):length() < 0.02 then
+        if nearEqual(v2.computedPos, v1.computedPos) then
             local pos = v1.computedPos + vec3(v1.computedValue):cross(v2.computedValue):normalize() * 0.15
             table.insert(gizmos, CrossGizmo:new(pos, quat(vec3(v1.computedValue):normalize())))
             table.insert(regions, MBSphereRegion:new(
@@ -279,7 +267,7 @@ function lovr.draw()
         vecMaterial:setColor(vec.color)
         local mat = contains(selectedVecs, id) and selectedVecMaterial or vecMaterial
 
-        if vec:isPoint() then
+        if vec.isPoint then
             lovr.graphics.sphere(mat, pos + value, 0.02)
 
             local toHeadset = vec3(lovr.headset.getPosition()) - value;
@@ -339,32 +327,62 @@ function actionVecValue(vecId, vecStartValue, handStartPos)
         end)
 
         local didSnap = false
-        if #snapRegions > 0 then
+        if #snapRegions > 0 and v.parentId then
             local otherId = snapRegions[1].info.data.vecId
 
             if vecId ~= otherId then
-                local pos, absolute = v:posFunc(vectors)
-                local otherPos, otherAbsolute = vectors:get(otherId):posFunc(vectors)
+                local selfChain = getVecAndParents(vectors, vecId)
+                local otherChain = getVecAndParents(vectors, otherId)
 
-                if absolute and otherAbsolute then
+                local selfRoot = vectors:get(selfChain[#selfChain])
+                local otherRoot = vectors:get(otherChain[#otherChain])
+
+                -- Check if they share a root, and if so, work up until they diverge
+                if nearEqual(selfRoot.computedPos, otherRoot.computedPos) then
+                    local closestRoot = nil
+                    for i = 0, math.min(#selfChain, #otherChain) - 1 do
+                        if selfChain[#selfChain - i] == otherChain[#otherChain - i] then
+                            closestRoot = selfChain[#selfChain - i]
+                        else
+                            break
+                        end
+                    end
+
+                    local function addValuesUntil(vecs, startId, stopId)
+                        local startVec = vecs:get(startId)
+                        local resultExpr = nil
+                        local resultVal = vec3(0, 0, 0)
+
+                        local currentVec = startVec
+                        while true do
+                            local currentVal, expr = currentVec:valueFunc(vecs) -- TODO: visited?
+                            resultVal = resultVal + currentVal
+                            if not resultExpr then
+                                resultExpr = (expr or '?')
+                            else
+                                resultExpr = (expr or '?') .. ' + ' .. resultExpr
+                            end
+
+                            if not currentVec.parentId or currentVec.parentId == stopId then
+                                break
+                            end
+
+                            currentVec = vecs:get(currentVec.parentId)
+                        end
+
+                        return resultVal, '(' .. resultExpr .. ')'
+                    end
+
+                    local aId = v.parentId
+                    local bId = otherId
+
                     v.valueFunc = function(self, vecs, visited)
                         local visited = visited or {}
 
-                        local pos, absolute, posExpr = self:posFunc(vecs, visited)
+                        local aResult, aExpr = addValuesUntil(vecs, aId, closestRoot) -- TODO: Visited?
+                        local bResult, bExpr = addValuesUntil(vecs, bId, closestRoot)
 
-                        local other = vecs:get(otherId)
-                        if visited[otherId] then
-                            print("Cycle detected in subtraction value func: already visited vector " .. other.label)
-                            return self.computedValue
-                        end
-                        local newVisited = visit(visited, otherId)
-
-                        local otherValue, otherValueExpr = other:valueFunc(vecs, newVisited)
-                        local otherPos, otherAbsolute, otherPosExpr = other:posFunc(vecs, newVisited)
-
-                        return
-                            (otherPos + otherValue) - pos,
-                            '(' .. (otherPosExpr or '?') .. ' + ' .. (otherValueExpr or '?') .. ' - ' .. (posExpr or '?') .. ')'
+                        return bResult - aResult, '(' .. bExpr .. ' - ' .. aExpr .. ')'
                     end
                     didSnap = true
                 end
@@ -480,23 +498,21 @@ function visit(t, id)
     return result
 end
 
-function posFuncSnapToTip(vecId)
-    return function(self, vecs, visited)
-        local visited = visited or {}
+function getVecAndParents(vecs, startId)
+    local result = {}
+    local currentId = startId
+    while true do
+        table.insert(result, currentId)
 
-        local v = vecs:get(vecId)
-        if visited[vecId] then
-            print("Cycle detected in posFuncSnapToTip: already visited vector " .. v.label)
-            return self.computedPos
+        local v = vecs:get(currentId)
+        if not v.parentId then
+            return result
         end
 
-        local newVisited = visit(visited or {}, vecId)
-
-        local val, valExpr = v:valueFunc(vecs, newVisited)
-        local pos, absolute, posExpr = v:posFunc(vecs, newVisited)
-        return
-            pos + val,
-            absolute,
-            '(' .. (posExpr or '?') .. ' + ' .. (valExpr or '?') .. ')'
+        currentId = v.parentId
     end
+end
+
+function nearEqual(vec1, vec2)
+    return (vec2 - vec1):length() < 0.02
 end

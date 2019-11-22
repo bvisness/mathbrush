@@ -3,7 +3,7 @@ MBObjectList = {}
 function MBObjectList:new()
     local newObj = {
         objs = {},
-        idCounter = 0,
+        idCounter = 1,
     }
     self.__index = self
     return setmetatable(newObj, self)

@@ -15,29 +15,27 @@ VEC_LABELS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 currentLabel = 1
 
 function MBVec:new(value, pos, isPoint)
-    local freeValue, freePos = nil, nil
+    local freeValue = nil
 
     if type(value) ~= 'function' then
         freeValue = value
-    end
-    if type(pos) ~= 'function' then
-        freePos = pos
     end
 
     self.__index = self
     local newObj = {
         valueFunc = freeValue and self.freeValueFunc or value,
-        posFunc = freePos and self.freePosFunc or pos,
 
         computedValue = lovr.math.newVec3(0, 0, 0),
         computedPos = lovr.math.newVec3(0, 0, 0),
         computedExpr = '(not computed)',
 
         freeValue = lovr.math.newVec3(freeValue or vec3(0, 0, 0)),
-        freePos = lovr.math.newVec3(freePos or vec3(0, 0, 0)),
+        freePos = lovr.math.newVec3(type(pos) ~= 'number' and pos or vec3(0, 0, 0)),
+        parentId = type(pos) == 'number' and pos or nil,
 
         label = VEC_LABELS:sub(currentLabel, currentLabel),
         color = VEC_COLORS[currentColor],
+        isPoint = isPoint or false,
     }
 
     -- increment stuff
@@ -48,7 +46,7 @@ function MBVec:new(value, pos, isPoint)
 end
 
 function MBVec:newPoint(value)
-    return MBVec:new(value, MBVec.pointPosFunc)
+    return MBVec:new(value, vec3(0, 0, 0), true)
 end
 
 function vstring(v)
@@ -57,7 +55,7 @@ end
 
 function MBVec:update(vectorList)
     local value, expr = self:valueFunc(vectorList)
-    local pos = self:posFunc(vectorList)
+    local pos = self:getPos(vectorList)
 
     -- handle evaluation errors and their updates here?
 
@@ -72,34 +70,30 @@ function MBVec:freeValueFunc()
     return vec3(self.freeValue), self.label
 end
 
-function MBVec:freePosFunc()
-    return vec3(self.freePos), false, 'freepos?'
-end
-
-function MBVec:pointPosFunc()
-    return vec3(0, 0, 0), true, 'pointpos?'
-end
-
 function MBVec:makeFreeValue()
     self.freeValue = self.computedValue
     self.valueFunc = self.freeValueFunc
-end
-
-function MBVec:makeFreePos()
-    self.freePos = self.computedPos
-    self.posFunc = self.freePosFunc
 end
 
 function MBVec:isFreeValue()
     return self.valueFunc == self.freeValueFunc
 end
 
-function MBVec:isFreePos()
-    return self.posFunc == self.freePosFunc
+function MBVec:getPos(vecs)
+    if self.parentId then
+        local parent = vecs:get(self.parentId)
+        return parent:getPos(vecs) + parent:valueFunc(vecs)
+    else
+        return self.freePos
+    end
 end
 
-function MBVec:isPoint()
-    return self.posFunc == self.pointPosFunc
+function MBVec:getPosArgument()
+    if self.parentId then
+        return self.parentId
+    else
+        return self.freePos
+    end
 end
 
 return MBVec
