@@ -31,6 +31,7 @@ function MBVec:new(value, pos, isPoint)
 
         computedValue = lovr.math.newVec3(0, 0, 0),
         computedPos = lovr.math.newVec3(0, 0, 0),
+        computedExpr = '(not computed)',
 
         freeValue = lovr.math.newVec3(freeValue or vec3(0, 0, 0)),
         freePos = lovr.math.newVec3(freePos or vec3(0, 0, 0)),
@@ -55,27 +56,28 @@ function vstring(v)
 end
 
 function MBVec:update(vectorList)
-    local value = self:valueFunc(vectorList)
+    local value, expr = self:valueFunc(vectorList)
     local pos = self:posFunc(vectorList)
 
     -- handle evaluation errors and their updates here?
 
     self.computedValue:set(value)
     self.computedPos:set(pos)
+    self.computedExpr = expr or 'NO EXPRESSION RETURNED'
 
     return value, pos
 end
 
 function MBVec:freeValueFunc()
-    return vec3(self.freeValue)
+    return vec3(self.freeValue), self.label
 end
 
 function MBVec:freePosFunc()
-    return vec3(self.freePos), false
+    return vec3(self.freePos), false, 'freepos?'
 end
 
 function MBVec:pointPosFunc()
-    return vec3(0, 0, 0), true
+    return vec3(0, 0, 0), true, 'pointpos?'
 end
 
 function MBVec:makeFreeValue()

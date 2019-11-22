@@ -89,30 +89,35 @@ function lovr.update()
 
                 vectors:add(MBVec:new(
                     function(self, vecs, visited)
+                        local v1 = vecs:get(vec1Id)
+                        local v2 = vecs:get(vec2Id)
+
                         visited = visited or {}
                         if visited[vec1Id] or visited[vec2Id] then
                             print(
                                 "Cycle detected in cross product value: "
-                                .. (visited[vec1Id] and "already visited vector " .. vec1Id .. ", ")
-                                .. (visited[vec2Id] and "already visited vector " .. vec2Id)
+                                .. (visited[vec1Id] and "already visited vector " .. v1.label .. ", ")
+                                .. (visited[vec2Id] and "already visited vector " .. v2.label)
                             )
                             return self.computedValue
                         end
 
                         -- TODO: Check for errors and wrong result types
-                        local v1value = vecs:get(vec1Id):valueFunc(vecs, visit(visited, vec1Id))
-                        local v2value = vecs:get(vec2Id):valueFunc(vecs, visit(visited, vec2Id))
-                        return vec3(v1value):cross(v2value)
+                        local v1value, v1expr = v1:valueFunc(vecs, visit(visited, vec1Id))
+                        local v2value, v2expr = v2:valueFunc(vecs, visit(visited, vec2Id))
+                        return vec3(v1value):cross(v2value), v1expr .. ' x ' .. v2expr
                     end,
                     function(self, vecs, visited)
+                        local v1 = vecs:get(vec1Id)
+
                         visited = visited or {}
                         if visited[vec1Id] then
-                            print("Cycle detected in cross product pos: already visited vector " .. vec1Id)
+                            print("Cycle detected in cross product pos: already visited vector " .. v1.label)
                             return self.computedPos
                         end
 
                         -- TODO: Check for errors
-                        return vecs:get(vec1Id):posFunc(vecs, visit(visited, vec1Id))
+                        return v1:posFunc(vecs, visit(visited, vec1Id))
                     end
                 ))
 
@@ -283,7 +288,7 @@ function lovr.draw()
             local labelOffset = (viewRight * -0.07) + (viewUp * -0.07)
             local labelPos = value + labelOffset;
             lovr.graphics.print(
-                vec.label,
+                vec.computedExpr,
                 labelPos,
                 0.1,
                 quat(mat4():lookAt(vec3(lovr.headset.getPosition()), labelPos))
@@ -305,7 +310,7 @@ function lovr.draw()
             local labelOffset = vec3(value):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * 0.07
             local labelPos = halfway + labelOffset;
             lovr.graphics.print(
-                vec.label,
+                vec.computedExpr,
                 labelPos,
                 0.1,
                 quat(mat4():lookAt(vec3(lovr.headset.getPosition()), labelPos))
@@ -345,18 +350,21 @@ function actionVecValue(vecId, vecStartValue, handStartPos)
                     v.valueFunc = function(self, vecs, visited)
                         local visited = visited or {}
 
-                        local pos, absolute = self:posFunc(vecs, visited)
+                        local pos, absolute, posExpr = self:posFunc(vecs, visited)
 
+                        local other = vecs:get(otherId)
                         if visited[otherId] then
-                            print("Cycle detected in subtraction value func: already visited vector " .. otherId)
+                            print("Cycle detected in subtraction value func: already visited vector " .. other.label)
                             return self.computedValue
                         end
                         local newVisited = visit(visited, otherId)
 
-                        local other = vecs:get(otherId)
-                        local otherPos, otherAbsolute = other:posFunc(vecs, newVisited)
+                        local otherValue, otherValueExpr = other:valueFunc(vecs, newVisited)
+                        local otherPos, otherAbsolute, otherPosExpr = other:posFunc(vecs, newVisited)
 
-                        return (otherPos + other:valueFunc(vecs, newVisited)) - pos;
+                        return
+                            (otherPos + otherValue) - pos,
+                            '(' .. (otherPosExpr or '?') .. ' + ' .. (otherValueExpr or '?') .. ' - ' .. (posExpr or '?') .. ')'
                     end
                     didSnap = true
                 end
@@ -476,16 +484,19 @@ function posFuncSnapToTip(vecId)
     return function(self, vecs, visited)
         local visited = visited or {}
 
+        local v = vecs:get(vecId)
         if visited[vecId] then
-            print("Cycle detected in posFuncSnapToTip: already visited vector " .. vecId)
+            print("Cycle detected in posFuncSnapToTip: already visited vector " .. v.label)
             return self.computedPos
         end
 
         local newVisited = visit(visited or {}, vecId)
 
-        local v = vecs:get(vecId)
-        local val = v:valueFunc(vecs, newVisited)
-        local pos, absolute = v:posFunc(vecs, newVisited)
-        return pos + val, absolute
+        local val, valExpr = v:valueFunc(vecs, newVisited)
+        local pos, absolute, posExpr = v:posFunc(vecs, newVisited)
+        return
+            pos + val,
+            absolute,
+            '(' .. (posExpr or '?') .. ' + ' .. (valExpr or '?') .. ')'
     end
 end
