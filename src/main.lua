@@ -1,5 +1,6 @@
 local inspect = require('inspect')
 local CrossGizmo = require('gizmos/crossgizmo')
+local NormalizeGizmo = require('gizmos/normalizegizmo')
 local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
@@ -11,6 +12,7 @@ local REGION_VEC_POS = 'REGION_VEC_POS'
 local REGION_VEC_SNAP_TIP = 'REGION_VEC_SNAP_TIP'
 local REGION_VEC_SNAP_TAIL = 'REGION_VEC_SNAP_TAIL'
 
+local REGION_VEC_MAKE_NORMALIZED = 'REGION_VEC_MAKE_NORMALIZED'
 local REGION_2VEC_ADD_CROSS = 'REGION_2VEC_ADD_CROSS'
 
 all_trackable_devices = {
@@ -83,6 +85,16 @@ function lovr.update()
                     end
                 end
                 activeVecs = {vecId}
+            elseif t == REGION_VEC_MAKE_NORMALIZED then
+                local v = vectors:get(selectedRegion.info.data.vecId)
+                local originalValueFunc = v.valueFunc
+
+                v.valueFunc = function(self, vecs, visited)
+                    local val, expr = originalValueFunc(self, vecs, visited)
+                    return val:normalize(), "normed(" .. expr .. ")"
+                end
+
+                selectedVecs = {}
             elseif t == REGION_2VEC_ADD_CROSS then
                 local vec1Id = selectedRegion.info.data.vec1Id
                 local vec2Id = selectedRegion.info.data.vec2Id
@@ -109,8 +121,6 @@ function lovr.update()
                     end,
                     vectors:get(vec1Id):getPosArgument()
                 ))
-
-                activeAction = function() end
 
                 selectedVecs = {}
             end
@@ -231,7 +241,26 @@ function lovr.update()
         end
     end
 
-    if #selectedVecs == 2 then
+    if #selectedVecs == 1 then
+        -- Show normalize gizmo
+        local v = vectors:get(selectedVecs[1])
+
+        local value = v.computedValue
+        local pos = v.computedPos
+
+        local halfway = pos + (value / 2)
+        local gizmoOffset = vec3(value):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * -0.07
+        local gizmoPos = halfway + gizmoOffset;
+
+        table.insert(gizmos, NormalizeGizmo:new(gizmoPos))
+        table.insert(regions, MBSphereRegion:new(
+            gizmoPos,
+            0.07,
+            MBRegionInfo:new(REGION_VEC_MAKE_NORMALIZED, {
+                vecId = selectedVecs[1],
+            })
+        ))
+    elseif #selectedVecs == 2 then
         -- Check for cross product
         local v1 = vectors:get(selectedVecs[1])
         local v2 = vectors:get(selectedVecs[2])
