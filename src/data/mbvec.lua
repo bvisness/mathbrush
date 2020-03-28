@@ -88,6 +88,10 @@ function MBVec:getPos(vecs)
     end
 end
 
+-- For use when you want to create another vector with the same position. Returns
+-- either the vector's parent ID or its free position, depending. It's called
+-- "getPosArgument" because it returns a value you can pass in to the pos argument
+-- of MBVec:new.
 function MBVec:getPosArgument()
     if self.parentId then
         return self.parentId

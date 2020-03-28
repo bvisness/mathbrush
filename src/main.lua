@@ -5,6 +5,7 @@ local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
 local MBVec = require('data/mbvec')
+local valueFunctions = require('values')
 
 local REGION_VEC_SELECT = 'REGION_VEC_SELECT'
 local REGION_VEC_VALUE = 'REGION_VEC_VALUE'
@@ -36,6 +37,8 @@ selectedVecs = {}
 activeAction = nil
 activeVecs = {}
 gizmos = {}
+sceneScale = 0.4
+scenePos = lovr.math.newVec3(0, 0, 0)
 function lovr.update()
     gizmos = {}
 
@@ -65,60 +68,18 @@ function lovr.update()
                 local vecId = selectedRegion.info.data.vecId
                 local vecStartPos = lovr.math.newVec3(vectors:get(vecId).computedPos)
                 local handStartPos = lovr.math.newVec3(handPos)
-                activeAction = function(handPos)
-                    local newPos = vecStartPos + (handPos - handStartPos)
-                    local snapRegions = groupBy(getRegionsContainingPoint(regions, newPos), function(v) return v.info.type end)
-
-                    local tips = snapRegions[REGION_VEC_SNAP_TIP]
-                    local tails = snapRegions[REGION_VEC_SNAP_TAIL]
-
-                    local v = vectors:get(vecId)
-                    if tips then
-                        v.parentId = tips[1].info.data.vecId
-                    else
-                        v.parentId = nil
-                        v.freePos:set(
-                            (tips and tips[1].center)
-                            or (tails and tails[1].center)
-                            or newPos
-                        )
-                    end
-                end
+                activeAction = actionVecPos(vecId, vecStartPos, handStartPos)
                 activeVecs = {vecId}
             elseif t == REGION_VEC_MAKE_NORMALIZED then
                 local v = vectors:get(selectedRegion.info.data.vecId)
-                local originalValueFunc = v.valueFunc
-
-                v.valueFunc = function(self, vecs, visited)
-                    local val, expr = originalValueFunc(self, vecs, visited)
-                    return val:normalize(), "normed(" .. expr .. ")"
-                end
-
+                v.valueFunc = valueFunctions.normalize(v.valueFunc)
                 selectedVecs = {}
             elseif t == REGION_2VEC_ADD_CROSS then
                 local vec1Id = selectedRegion.info.data.vec1Id
                 local vec2Id = selectedRegion.info.data.vec2Id
 
                 vectors:add(MBVec:new(
-                    function(self, vecs, visited)
-                        local v1 = vecs:get(vec1Id)
-                        local v2 = vecs:get(vec2Id)
-
-                        visited = visited or {}
-                        if visited[vec1Id] or visited[vec2Id] then
-                            print(
-                                "Cycle detected in cross product value: "
-                                .. (visited[vec1Id] and "already visited vector " .. v1.label .. ", ")
-                                .. (visited[vec2Id] and "already visited vector " .. v2.label)
-                            )
-                            return self.computedValue
-                        end
-
-                        -- TODO: Check for errors and wrong result types
-                        local v1value, v1expr = v1:valueFunc(vecs, visit(visited, vec1Id))
-                        local v2value, v2expr = v2:valueFunc(vecs, visit(visited, vec2Id))
-                        return vec3(v1value):cross(v2value), v1expr .. ' x ' .. v2expr
-                    end,
+                    valueFunctions.cross(vec1Id, vec2Id),
                     vectors:get(vec1Id):getPosArgument()
                 ))
 
@@ -131,43 +92,26 @@ function lovr.update()
             -- Make a new vector.
 
             if lovr.headset.isDown('hand/right', 'menu') then
-                vectors:add(MBVec:newPoint(handPos))
+                vectors:add(MBVec:newPoint(posWorldToScene(handPos)))
             else
                 local handStartPos = lovr.math.newVec3(handPos)
-                local pos = handStartPos
+                local newVecPos = lovr.math.newVec3(posWorldToScene(handStartPos))
 
                 if selectedRegion then
                     local t = selectedRegion.info.type
                     if t == REGION_VEC_SNAP_TAIL then
                         local other = vectors:get(selectedRegion.info.data.vecId)
                         if other.parentId then
-                            pos = other.parentId -- TODO: Someday could we just add a notion of "region priority" and give priority to tips?
+                            newVecPos = other.parentId -- TODO: Someday could we just add a notion of "region priority" and give priority to tips?
                         else
-                            pos = other.freePos
+                            newVecPos = other.freePos
                         end
                     elseif t == REGION_VEC_SNAP_TIP then
-                        pos = selectedRegion.info.data.vecId
+                        newVecPos = selectedRegion.info.data.vecId
                     end
                 end
 
-                local didAddVec = false
-                local newVecId = -1
-                local vecValueAction = nil
-
-                activeAction = function(handPos)
-                    if not didAddVec and (handPos - handStartPos):length() > 0.02 then
-                        newVecId = vectors:add(MBVec:new(
-                            handPos - handStartPos,
-                            pos
-                        ))
-
-                        didAddVec = true
-                        vecValueAction = actionVecValue(newVecId, lovr.math.newVec3(0, 0, 0), handStartPos)
-                    elseif didAddVec then
-                        assert(newVecId ~= -1)
-                        vecValueAction(handPos)
-                    end
-                end
+                activeAction = actionNewVector(handStartPos, newVecPos)
             end
 
             selectedVecs = {}
@@ -187,14 +131,14 @@ function lovr.update()
 
         if vec.isPoint then
             table.insert(regions, MBSphereRegion:new(
-                vec.computedValue,
+                posSceneToWorld(vec.computedValue),
                 0.07,
                 MBRegionInfo:new(REGION_VEC_VALUE, {
                     vecId = id,
                 })
             ))
             table.insert(regions, MBSphereRegion:new(
-                vec.computedValue,
+                posSceneToWorld(vec.computedValue),
                 0.07,
                 MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
                     vecId = id,
@@ -202,7 +146,7 @@ function lovr.update()
             ))
         else
             table.insert(regions, MBSphereRegion:new(
-                vec.computedPos + vec.computedValue / 2,
+                posSceneToWorld(vec.computedPos + vec.computedValue / 2),
                 0.07,
                 MBRegionInfo:new(REGION_VEC_SELECT, {
                     vecId = id,
@@ -224,14 +168,14 @@ function lovr.update()
             ))
             if not contains(activeVecs, id) then
                 table.insert(regions, MBSphereRegion:new(
-                    vec.computedPos,
+                    posSceneToWorld(vec.computedPos),
                     0.07,
                     MBRegionInfo:new(REGION_VEC_SNAP_TAIL, {
                         vecId = id,
                     })
                 ))
                 table.insert(regions, MBSphereRegion:new(
-                    vec.computedPos + vec.computedValue,
+                    posSceneToWorld(vec.computedPos + vec.computedValue),
                     0.07,
                     MBRegionInfo:new(REGION_VEC_SNAP_TIP, {
                         vecId = id,
@@ -245,11 +189,11 @@ function lovr.update()
         -- Show normalize gizmo
         local v = vectors:get(selectedVecs[1])
 
-        local value = v.computedValue
-        local pos = v.computedPos
+        local valueWorld = valueSceneToWorld(v.computedValue)
+        local posWorld = posSceneToWorld(v.computedPos)
 
-        local halfway = pos + (value / 2)
-        local gizmoOffset = vec3(value):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * -0.07
+        local halfway = posWorld + (valueWorld / 2)
+        local gizmoOffset = vec3(valueWorld):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * -0.07
         local gizmoPos = halfway + gizmoOffset;
 
         table.insert(gizmos, NormalizeGizmo:new(gizmoPos))
@@ -265,8 +209,12 @@ function lovr.update()
         local v1 = vectors:get(selectedVecs[1])
         local v2 = vectors:get(selectedVecs[2])
         if nearEqual(v2.computedPos, v1.computedPos) then
-            local pos = v1.computedPos + vec3(v1.computedValue):cross(v2.computedValue):normalize() * 0.15
-            table.insert(gizmos, CrossGizmo:new(pos, quat(vec3(v1.computedValue):normalize())))
+            local v1PosWorld = posSceneToWorld(v1.computedPos)
+            local v1ValueWorld = valueSceneToWorld(v1.computedValue)
+            local v2ValueWorld = valueSceneToWorld(v2.computedValue)
+
+            local pos = v1PosWorld + vec3(v1ValueWorld):cross(v2ValueWorld):normalize() * 0.15
+            table.insert(gizmos, CrossGizmo:new(pos, quat(vec3(v1ValueWorld):normalize())))
             table.insert(regions, MBSphereRegion:new(
                 pos,
                 0.07,
@@ -285,41 +233,45 @@ vecMaterial = lovr.graphics.newMaterial(0xdddddd)
 selectedVecMaterial = lovr.graphics.newMaterial(0xffeeaa)
 regionMaterial = lovr.graphics.newMaterial(0xaaaadd)
 function lovr.draw()
-    for i, hand in pairs(lovr.headset.getHands()) do
+    for _, hand in pairs(lovr.headset.getHands()) do
         all_trackable_devices[hand].model:draw(pose2mat4(lovr.headset.getPose(hand)))
     end
 
     for id, vec in pairs(vectors.objs) do
-        local value = vec.computedValue
-        local pos = vec.computedPos
+        local valueScene = vec.computedValue
+        local posScene = vec.computedPos
+
+        local valueWorld = valueSceneToWorld(valueScene)
+        local posWorld = posSceneToWorld(posScene)
 
         vecMaterial:setColor(vec.color)
         local mat = contains(selectedVecs, id) and selectedVecMaterial or vecMaterial
 
         if vec.isPoint then
-            lovr.graphics.sphere(mat, pos + value, 0.02)
+            local worldPos = posWorld + valueWorld
+            lovr.graphics.sphere(mat, worldPos, 0.02)
 
-            local toHeadset = vec3(lovr.headset.getPosition()) - value;
+            local toHeadset = vec3(lovr.headset.getPosition()) - valueWorld;
             local viewRight = vec3(0, 1, 0):cross(toHeadset):normalize()
             local viewUp = vec3(toHeadset):cross(viewRight):normalize()
             local labelOffset = (viewRight * -0.07) + (viewUp * -0.07)
-            local labelPos = value + labelOffset;
+            local labelPos = worldPos + labelOffset;
             printLabel(vec.computedExpr, labelPos)
         else
             local TIP_LENGTH = 0.07
 
-            local length = math.max(0.01, value:length() - 0.05)
-            local rot = quat(vec3(value):normalize())
+            local length = math.max(0.01, valueWorld:length() - 0.05)
+            local rot = quat(vec3(valueWorld):normalize())
 
-            lovr.graphics.cylinder(mat, pos + vec3(value):normalize() * length / 2, length, rot, 0.01, 0.01)
+            lovr.graphics.cylinder(mat, posWorld + vec3(valueWorld):normalize() * length / 2, length, rot, 0.01, 0.01)
             lovr.graphics.cylinder(
                 mat,
-                pos + value - vec3(value):normalize() * TIP_LENGTH / 2,
+                posWorld + valueWorld - vec3(valueWorld):normalize() * TIP_LENGTH / 2,
                 TIP_LENGTH, rot, 0, 0.03
             )
 
-            local halfway = pos + (value / 2)
-            local labelOffset = vec3(value):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * 0.07
+            local halfway = posWorld + (valueWorld / 2)
+            local labelOffset = vec3(valueWorld):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * 0.07
             local labelPos = halfway + labelOffset;
             printLabel(vec.computedExpr, labelPos)
         end
@@ -334,6 +286,32 @@ function lovr.draw()
     end
 end
 
+-- Returns an action function that will create a new vector if the user drags far
+-- enough. The vecPos argument will be passed to MBVec:new when the vector is created,
+-- so it can take either a position or a parent ID.
+function actionNewVector(handStartPosWorld, vecPos)
+    local didAddVec = false
+    local newVecId = -1
+    local vecValueAction = nil
+
+    return function(handPos)
+        if not didAddVec and (handPos - handStartPosWorld):length() > 0.02 then
+            newVecId = vectors:add(MBVec:new(
+                valueWorldToScene(handPos - handStartPosWorld),
+                vecPos
+            ))
+
+            didAddVec = true
+            vecValueAction = actionVecValue(newVecId, lovr.math.newVec3(0, 0, 0), handStartPosWorld)
+        elseif didAddVec then
+            assert(newVecId ~= -1)
+            vecValueAction(handPos)
+        end
+    end
+end
+
+-- Returns an action function that modifies a vector's value. The primary function that handles
+-- dragging the tip of a vector around, snapping it to things, etc.
 function actionVecValue(vecId, vecStartValue, handStartPos)
     return function(handPos)
         local v = vectors:get(vecId)
@@ -396,7 +374,7 @@ function actionVecValue(vecId, vecStartValue, handStartPos)
                     local bId = otherId
 
                     v.valueFunc = function(self, vecs, visited)
-                        local visited = visited or {}
+                        visited = visited or {}
 
                         local aResult, aExpr = addValuesUntil(vecs, aId, closestRoot) -- TODO: Visited?
                         local bResult, bExpr = addValuesUntil(vecs, bId, closestRoot)
@@ -410,7 +388,31 @@ function actionVecValue(vecId, vecStartValue, handStartPos)
 
         if not didSnap then
             v:makeFreeValue()
-            v.freeValue:set(vecStartValue + (handPos - handStartPos))
+            v.freeValue:set(vecStartValue + valueWorldToScene(handPos - handStartPos))
+        end
+    end
+end
+
+-- Returns an action function that modifies a vector's position. Handles snapping vectors' tails
+-- to things - either other vectors' tips or tails.
+function actionVecPos(vecId, vecStartPos, handStartPos)
+    return function(handPos)
+        local newPosWorld = posSceneToWorld(vecStartPos) + (handPos - handStartPos)
+        local snapRegions = groupBy(getRegionsContainingPoint(regions, newPosWorld), function(v) return v.info.type end)
+
+        local tips = snapRegions[REGION_VEC_SNAP_TIP]
+        local tails = snapRegions[REGION_VEC_SNAP_TAIL]
+
+        local v = vectors:get(vecId)
+        if tips then
+            v.parentId = tips[1].info.data.vecId
+        else
+            v.parentId = nil
+            v.freePos:set(posWorldToScene(
+                (tips and tips[1].center)
+                or (tails and tails[1].center)
+                or newPosWorld
+            ))
         end
     end
 end
@@ -424,11 +426,15 @@ function pose2mat4(x, y, z, angle, ax, ay, az)
 end
 
 function valueHandlePos(vecValue, vecPos)
-    return vecPos + vecValue - (vec3(vecValue):normalize() * 0.10)
+    local valueWorld = valueSceneToWorld(vecValue)
+    local posWorld = posSceneToWorld(vecPos)
+    return posWorld + valueWorld - (vec3(valueWorld):normalize() * 0.10)
 end
 
 function posHandlePos(vecValue, vecPos)
-    return vecPos + (vec3(vecValue):normalize() * 0.05)
+    local valueWorld = valueSceneToWorld(vecValue)
+    local posWorld = posSceneToWorld(vecPos)
+    return posWorld + (vec3(valueWorld):normalize() * 0.05)
 end
 
 function contains(t, v)
@@ -507,16 +513,6 @@ function map(t, f)
     return result
 end
 
-function visit(t, id)
-    local result = {}
-    for k, v in pairs(t) do
-        result[v] = v
-    end
-    t[id] = true
-
-    return result
-end
-
 function getVecAndParents(vecs, startId)
     local result = {}
     local currentId = startId
@@ -546,4 +542,20 @@ function printLabel(text, pos)
         'center',
         'middle'
     )
+end
+
+function valueSceneToWorld(val)
+    return val * sceneScale
+end
+
+function posSceneToWorld(pos)
+    return pos * sceneScale + scenePos
+end
+
+function valueWorldToScene(val)
+    return val / sceneScale
+end
+
+function posWorldToScene(pos)
+    return (pos - scenePos) / sceneScale
 end
