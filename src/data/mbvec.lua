@@ -36,6 +36,7 @@ function MBVec:new(value, pos, isPoint)
         label = VEC_LABELS:sub(currentLabel, currentLabel),
         color = VEC_COLORS[currentColor],
         isPoint = isPoint or false,
+        showPlane = false,
     }
 
     -- increment stuff

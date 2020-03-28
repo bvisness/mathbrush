@@ -1,11 +1,14 @@
 local inspect = require('inspect')
 local CrossGizmo = require('gizmos/crossgizmo')
-local NormalizeGizmo = require('gizmos/normalizegizmo')
 local MBObjectList = require('data/mbobjectlist')
 local MBRegionInfo = require('data/mbregioninfo')
 local MBSphereRegion = require('data/mbsphereregion')
 local MBVec = require('data/mbvec')
+local NormalizeGizmo = require('gizmos/normalizegizmo')
+local ProjectOntoPlaneGizmo = require('gizmos/projectplanegizmo')
+local TogglePlaneGizmo = require('gizmos/planegizmo')
 local valueFunctions = require('values')
+local vmath = require('vmath')
 
 local REGION_VEC_SELECT = 'REGION_VEC_SELECT'
 local REGION_VEC_VALUE = 'REGION_VEC_VALUE'
@@ -14,7 +17,9 @@ local REGION_VEC_SNAP_TIP = 'REGION_VEC_SNAP_TIP'
 local REGION_VEC_SNAP_TAIL = 'REGION_VEC_SNAP_TAIL'
 
 local REGION_VEC_MAKE_NORMALIZED = 'REGION_VEC_MAKE_NORMALIZED'
+local REGION_VEC_TOGGLE_PLANE = 'REGION_VEC_TOGGLE_PLANE'
 local REGION_2VEC_ADD_CROSS = 'REGION_2VEC_ADD_CROSS'
+local REGION_2VEC_PROJECT_PLANE = 'REGION_2VEC_PROJECT_PLANE'
 
 all_trackable_devices = {
     ['hand/left'] = {
@@ -74,12 +79,25 @@ function lovr.update()
                 local v = vectors:get(selectedRegion.info.data.vecId)
                 v.valueFunc = valueFunctions.normalize(v.valueFunc)
                 selectedVecs = {}
+            elseif t == REGION_VEC_TOGGLE_PLANE then
+                local v = vectors:get(selectedRegion.info.data.vecId)
+                v.showPlane = not v.showPlane
             elseif t == REGION_2VEC_ADD_CROSS then
                 local vec1Id = selectedRegion.info.data.vec1Id
                 local vec2Id = selectedRegion.info.data.vec2Id
 
                 vectors:add(MBVec:new(
                     valueFunctions.cross(vec1Id, vec2Id),
+                    vectors:get(vec1Id):getPosArgument()
+                ))
+
+                selectedVecs = {}
+            elseif t == REGION_2VEC_PROJECT_PLANE then
+                local vec1Id = selectedRegion.info.data.vec1Id
+                local vec2Id = selectedRegion.info.data.vec2Id
+
+                vectors:add(MBVec:new(
+                    valueFunctions.projectPlane(vec1Id, vec2Id),
                     vectors:get(vec1Id):getPosArgument()
                 ))
 
@@ -186,26 +204,36 @@ function lovr.update()
     end
 
     if #selectedVecs == 1 then
-        -- Show normalize gizmo
         local v = vectors:get(selectedVecs[1])
 
         local valueWorld = valueSceneToWorld(v.computedValue)
         local posWorld = posSceneToWorld(v.computedPos)
 
+        -- Show normalize gizmo
         local halfway = posWorld + (valueWorld / 2)
         local gizmoOffset = vec3(valueWorld):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * -0.07
-        local gizmoPos = halfway + gizmoOffset;
-
-        table.insert(gizmos, NormalizeGizmo:new(gizmoPos))
+        local normalizeGizmoPos = halfway + gizmoOffset;
+        table.insert(gizmos, NormalizeGizmo:new(normalizeGizmoPos))
         table.insert(regions, MBSphereRegion:new(
-            gizmoPos,
+            normalizeGizmoPos,
             0.07,
             MBRegionInfo:new(REGION_VEC_MAKE_NORMALIZED, {
                 vecId = selectedVecs[1],
             })
         ))
+
+        -- Show plane gizmo
+        local planeGizmoPos = posWorld + (valueWorld * 0.2) + gizmoOffset
+        table.insert(gizmos, TogglePlaneGizmo:new(planeGizmoPos, v.showPlane))
+        table.insert(regions, MBSphereRegion:new(
+            planeGizmoPos,
+            0.07,
+            MBRegionInfo:new(REGION_VEC_TOGGLE_PLANE, {
+                vecId = selectedVecs[1],
+            })
+        ))
     elseif #selectedVecs == 2 then
-        -- Check for cross product
+        -- Check for cross product and stuff
         local v1 = vectors:get(selectedVecs[1])
         local v2 = vectors:get(selectedVecs[2])
         if nearEqual(v2.computedPos, v1.computedPos) then
@@ -223,6 +251,19 @@ function lovr.update()
                     vec2Id = selectedVecs[2],
                 })
             ))
+
+            if v2.showPlane then
+                local projectGizmoPos = v1PosWorld + ((v1ValueWorld + vmath.projectOntoPlane(v1ValueWorld, v2ValueWorld)) / 2)
+                table.insert(gizmos, ProjectOntoPlaneGizmo:new(projectGizmoPos))
+                table.insert(regions, MBSphereRegion:new(
+                    projectGizmoPos,
+                    0.07,
+                    MBRegionInfo:new(REGION_2VEC_PROJECT_PLANE, {
+                        vec1Id = selectedVecs[1],
+                        vec2Id = selectedVecs[2],
+                    })
+                ))
+            end
         end
     end
 
@@ -269,6 +310,10 @@ function lovr.draw()
                 posWorld + valueWorld - vec3(valueWorld):normalize() * TIP_LENGTH / 2,
                 TIP_LENGTH, rot, 0, 0.03
             )
+
+            if vec.showPlane then
+                lovr.graphics.box(mat, posWorld, 0.5, 0.5, 0.001, rot)
+            end
 
             local halfway = posWorld + (valueWorld / 2)
             local labelOffset = vec3(valueWorld):cross(vec3(lovr.headset.getPosition()) - halfway):normalize() * 0.07
